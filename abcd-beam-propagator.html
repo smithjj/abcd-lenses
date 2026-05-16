@@ -68,10 +68,13 @@ canvas { width: 100%; height: 520px; display: block; cursor: crosshair; }
     <div class="control-group">
       <h3>Beam Parameters</h3>
       <div class="field"><label>Wavelength λ (nm)</label><input type="number" id="wavelength" value="633" min="1" step="1"></div>
-      <div class="field"><label>Initial width w₀ (mm)</label><input type="number" id="w0" value="0.5" min="0.001" step="0.01"></div>
+      <div class="field"><label>Initial w₀ (mm)</label><input type="number" id="w0" value="0.5" min="0.001" step="0.01"></div>
+      <div class="field"><label>Initial w₀y (mm)</label><input type="number" id="w0y" value="0.5" min="0.001" step="0.01"></div>
+      <div class="field"><label>M²</label><input type="number" id="M2" value="1" min="1" step="0.1" title="Beam propagation factor (1 = ideal Gaussian)"></div>
       <div class="field"><label>Initial R₀ (mm)</label><input type="number" id="R0" value="0" step="10" title="0 = infinite (plane wavefront)"></div>
+      <div class="field"><label>Initial R₀y (mm)</label><input type="number" id="R0y" value="0" step="10" title="0 = infinite (plane wavefront)"></div>
       <div class="field"><label>Total length (mm)</label><input type="number" id="totalLength" value="300" min="1" step="10"></div>
-      <div class="field"><label>Samples</label><input type="number" id="samples" value="600" min="50" max="5000" step="50"></div>
+      <div class="field"><label>Samples</label><input type="number" id="samples" value="4096" min="50" max="50000" step="50"></div>
     </div>
     <div class="control-group">
       <h3>Lenses <button class="btn-add-lens" id="addLensBtn">+ Add Lens</button></h3>
@@ -86,6 +89,7 @@ canvas { width: 100%; height: 520px; display: block; cursor: crosshair; }
     <label class="toggle-label"><input type="checkbox" id="showInvR"> Show 1/R(z)</label>
     <label class="toggle-label"><input type="checkbox" id="showPhase"> Show φ(z)</label>
     <label class="toggle-label"><input type="checkbox" id="showPoints" checked> Points</label>
+    <label class="toggle-label"><input type="checkbox" id="showWaistTrack"> Compare: waist-tracking (dashed)</label>
     <button class="btn" id="resetZoomBtn" style="display:none">Reset Zoom</button>
   </div>
 
@@ -98,7 +102,7 @@ canvas { width: 100%; height: 520px; display: block; cursor: crosshair; }
 
   <div class="results" id="resultsPanel">
     <h3>Beam at Key Positions</h3>
-    <table><thead><tr><th>z (mm)</th><th>Description</th><th>w(z) (mm)</th><th>R(z) (mm)</th><th>φ(z) (rad)</th></tr></thead><tbody id="resultsBody"></tbody></table>
+    <table><thead id="resultsHead"><tr><th>z (mm)</th><th>Description</th><th>wₓ(z) (mm)</th><th>wᵧ(z) (mm)</th><th>R(z) (mm)</th><th>φ(z) (rad)</th></tr></thead><tbody id="resultsBody"></tbody></table>
   </div>
 </div>
 
@@ -133,7 +137,7 @@ const C = {
 // ══════════════════════════════════════════════════════════════
 function matId() { return [[1,0],[0,1]]; }
 function matFree(d) { return [[1,d],[0,1]]; }
-function matLens(f) { return [[1,0],[-1/f,1]]; }
+function matLens(f) { return (!f || !isFinite(f)) ? [[1,0],[0,1]] : [[1,0],[-1/f,1]]; }
 function matMul(A, B) {
   return [
     [A[0][0]*B[0][0] + A[0][1]*B[1][0], A[0][0]*B[0][1] + A[0][1]*B[1][1]],
@@ -159,22 +163,28 @@ function applyABCD(M, q) {
 
 // Compute the initial q-parameter from waist w₀ and R₀.
 // R₀ = 0 is treated as ∞ (plane wavefront at z = 0).
-function initQ(lambda, w0, R0) {
-  const absR0 = Math.abs(R0);
-  const invR = absR0 < 1e-12 ? 0 : 1/R0;
-  const invQ = [invR, -lambda / (Math.PI * w0 * w0)];
+function initQ(lambda, w0, R0, M2) {
+  const invR = Math.abs(R0) < 1e-12 ? 0 : 1/R0;
+  const invQ = [invR, -M2 * lambda / (Math.PI * w0 * w0)];
   return C.inv(invQ);
 }
 
 // Extract the beam width w and radius of curvature R from q.
-function qToWR(q, lambda) {
+function qToWR(q, lambda, M2) {
   const invQ = C.inv(q);
   const invR = invQ[0];
-  const invW2 = -invQ[1] * Math.PI / lambda;
+  const invW2 = -invQ[1] * Math.PI / (M2 * lambda);
   if (invW2 <= 0) return { w: Infinity, R: Math.abs(invR) < 1e-15 ? Infinity : 1/invR };
   const w = 1 / Math.sqrt(invW2);
   const R = Math.abs(invR) < 1e-15 ? Infinity : 1/invR;
   return { w, R };
+}
+
+// Reconstruct the q-parameter from w and R.
+function reconstructQ(w, R, lambda, M2) {
+  const invRVal = isFinite(R) && Math.abs(R) > 1e-15 ? 1 / R : 0;
+  const invQ = [invRVal, -M2 * lambda / (Math.PI * w * w)];
+  return C.inv(invQ);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -187,7 +197,7 @@ function qToWR(q, lambda) {
 // ABCD matrix from the start of the segment, which avoids
 // accumulating floating-point error across many steps.
 // ══════════════════════════════════════════════════════════════
-function propagate(lambda, w0, R0, lenses, totalLen, nSamples) {
+function propagate(lambda, w0, R0, lenses, totalLen, nSamples, M2) {
   const active = lenses.filter(l => l.active).sort((a, b) => a.pos - b.pos);
   const zMax = Math.max(totalLen, ...(active.length ? active.map(l => l.pos) : [0]));
 
@@ -196,14 +206,14 @@ function propagate(lambda, w0, R0, lenses, totalLen, nSamples) {
   const RValues = [];
   const phaseValues = [];
 
-  const q0 = initQ(lambda, w0, R0);
+  const q0 = initQ(lambda, w0, R0, M2);
 
   // No lenses — simple uniform free-space propagation.
   if (active.length === 0) {
     for (let i = 0; i < nSamples; i++) {
       const z = (i / (nSamples - 1)) * zMax;
       const M = matFree(z);
-      const res = qToWR(applyABCD(M, q0), lambda);
+      const res = qToWR(applyABCD(M, q0), lambda, M2);
       zValues.push(z); wValues.push(res.w); RValues.push(res.R);
       const val = C.add([M[0][0], 0], C.scale(C.inv(q0), M[0][1]));
       phaseValues.push(-Math.atan2(val[1], val[0]));
@@ -221,7 +231,7 @@ function propagate(lambda, w0, R0, lenses, totalLen, nSamples) {
   const ptsPerSeg = Math.max(3, Math.floor(nSamples / nSegs));
 
   // Record the initial plane.
-  { const r = qToWR(q, lambda); zValues.push(0); wValues.push(r.w); RValues.push(r.R); phaseValues.push(0); }
+  { const r = qToWR(q, lambda, M2); zValues.push(0); wValues.push(r.w); RValues.push(r.R); phaseValues.push(0); }
 
   for (const lens of active) {
     const dz = lens.pos - prevZ;
@@ -234,7 +244,7 @@ function propagate(lambda, w0, R0, lenses, totalLen, nSamples) {
         const z = prevZ + (j / ptsPerSeg) * dz;
         const subDz = z - prevZ;
         const M_at = matMul(matFree(subDz), M_cum);
-        const r = qToWR(applyABCD(matFree(subDz), q), lambda);
+        const r = qToWR(applyABCD(matFree(subDz), q), lambda, M2);
         zValues.push(z); wValues.push(r.w); RValues.push(r.R);
         const val = C.add([M_at[0][0], 0], C.scale(C.inv(q0), M_at[0][1]));
         phaseValues.push(-Math.atan2(val[1], val[0]));
@@ -244,7 +254,7 @@ function propagate(lambda, w0, R0, lenses, totalLen, nSamples) {
     }
 
     // Beam parameters just before the lens.
-    const b = qToWR(q, lambda);
+    const b = qToWR(q, lambda, M2);
     zValues.push(lens.pos); wValues.push(b.w); RValues.push(b.R);
     { const val = C.add([M_cum[0][0], 0], C.scale(C.inv(q0), M_cum[0][1])); phaseValues.push(-Math.atan2(val[1], val[0])); }
 
@@ -253,7 +263,7 @@ function propagate(lambda, w0, R0, lenses, totalLen, nSamples) {
     q = applyABCD(matLens(lens.f), q);
 
     // Beam parameters just after the lens.
-    const a = qToWR(q, lambda);
+    const a = qToWR(q, lambda, M2);
     zValues.push(lens.pos); wValues.push(a.w); RValues.push(a.R);
     { const val = C.add([M_cum[0][0], 0], C.scale(C.inv(q0), M_cum[0][1])); phaseValues.push(-Math.atan2(val[1], val[0])); }
 
@@ -267,18 +277,86 @@ function propagate(lambda, w0, R0, lenses, totalLen, nSamples) {
       const z = prevZ + (j / ptsPerSeg) * remaining;
       const subDz = z - prevZ;
       const M_at = matMul(matFree(subDz), M_cum);
-      const r = qToWR(applyABCD(matFree(subDz), q), lambda);
+      const r = qToWR(applyABCD(matFree(subDz), q), lambda, M2);
       zValues.push(z); wValues.push(r.w); RValues.push(r.R);
       const val = C.add([M_at[0][0], 0], C.scale(C.inv(q0), M_at[0][1]));
       phaseValues.push(-Math.atan2(val[1], val[0]));
     }
     M_cum = matMul(matFree(remaining), M_cum);
-    const f = qToWR(applyABCD(matFree(remaining), q), lambda);
+    const f = qToWR(applyABCD(matFree(remaining), q), lambda, M2);
     zValues.push(zMax); wValues.push(f.w); RValues.push(f.R);
     { const val = C.add([M_cum[0][0], 0], C.scale(C.inv(q0), M_cum[0][1])); phaseValues.push(-Math.atan2(val[1], val[0])); }
   }
 
   return { zValues, wValues, RValues, phaseValues, zMax };
+}
+
+// ══════════════════════════════════════════════════════════════
+// Waist-tracking (standard formula) propagation
+//
+// Alternative propagation method that tracks the beam waist
+// position (z₀) and Rayleigh range (z_R) explicitly instead of
+// using ABCD matrices.  At each free-space sample point:
+//
+//   w(z) = w₀ · √(1 + ((z − z₀)/z_R)²)
+//   R(z) = (z − z₀) · (1 + (z_R/(z − z₀))²)
+//
+// At a thin lens the radius transforms as 1/R_aft = 1/R_bef − 1/f
+// while w is continuous, then a new waist is located via the
+// q-parameter.  The method produces results identical to ABCD
+// and serves as a cross-check.
+// ══════════════════════════════════════════════════════════════
+function propagateWaistTracking(zValues, w0, R0, lenses, lambda, M2) {
+  M2 = M2 || 1;
+  const active = lenses.filter(l => l.active).sort((a, b) => a.pos - b.pos);
+  const n = zValues.length;
+  const wVals = new Float64Array(n);
+  const rVals = new Float64Array(n);
+
+  // Determine the input waist parameters.
+  let zWaist, wWaist, zR;
+  if (Math.abs(R0) < 1e-12 || !isFinite(R0)) {
+    zWaist = 0;
+    wWaist = w0;
+    zR = Math.PI * w0 * w0 / (M2 * lambda);
+  } else {
+    const q0 = reconstructQ(w0, R0, lambda, M2);
+    zWaist = -q0[0];
+    zR = q0[1];
+    wWaist = Math.sqrt(M2 * lambda * zR / Math.PI);
+  }
+
+  // Build a fast look-up of lens positions.
+  const lensAt = new Map();
+  for (let i = 0; i < active.length; i++) lensAt.set(active[i].pos, active[i]);
+
+  let lensIdx = 0;
+  for (let i = 0; i < n; i++) {
+    const z = zValues[i];
+
+    // Detect "after lens" sample: same z as previous at a lens position.
+    if (i > 0 && z === zValues[i - 1] && lensAt.has(z) && lensIdx < active.length) {
+      const lens = active[lensIdx];
+      if (lens.f) {
+        const w_bef = wVals[i - 1];
+        const R_bef = rVals[i - 1];
+        const invR_bef = isFinite(R_bef) && Math.abs(R_bef) > 1e-15 ? 1 / R_bef : 0;
+        const invR_aft = invR_bef - 1 / lens.f;
+        const R_aft = Math.abs(invR_aft) < 1e-15 ? Infinity : 1 / invR_aft;
+        const q_aft = reconstructQ(w_bef, R_aft, lambda, M2);
+        zWaist = z - q_aft[0];
+        zR = q_aft[1];
+        wWaist = Math.sqrt(M2 * lambda * zR / Math.PI);
+      }
+      lensIdx++;
+    }
+
+    const d = z - zWaist;
+    wVals[i] = wWaist * Math.sqrt(1 + (d / zR) ** 2);
+    rVals[i] = Math.abs(d) < 1e-15 ? Infinity : d * (1 + (zR / d) ** 2);
+  }
+
+  return { wValues: wVals, RValues: rVals };
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -292,7 +370,7 @@ function propagate(lambda, w0, R0, lenses, totalLen, nSamples) {
 // Lens positions are marked with dashed vertical lines and a
 // double-headed arrow symbol at the top of the w(z) panel.
 // ══════════════════════════════════════════════════════════════
-function drawPlot(canvas, data, lenses, opts) {
+function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;
   canvas.width = rect.width * dpr;
@@ -301,7 +379,9 @@ function drawPlot(canvas, data, lenses, opts) {
   ctx.scale(dpr, dpr);
   const W = rect.width, H = rect.height;
 
-  const { zValues, wValues, RValues, phaseValues, zMax } = data;
+  const { zValues, wValues: wValuesX, RValues, phaseValues, zMax } = dataX;
+  const wValuesY = dataY ? dataY.wValues : null;
+  const isAsymmetric = wValuesY && (wValuesX.length === wValuesY.length);
   const active = lenses.filter(l => l.active).sort((a, b) => a.pos - b.pos);
 
   // Two-panel layout with margins for axis labels.
@@ -327,11 +407,12 @@ function drawPlot(canvas, data, lenses, opts) {
   if (i0 > 0) i0--;
   if (i1 < zValues.length - 1) i1++;
 
-  // Auto-scale y-axes from visible data only.
+  // Auto-scale y-axes from visible data only (both x and y widths).
   const finiteW = [];
   const finiteR = [];
   for (let i = i0; i <= i1; i++) {
-    if (isFinite(wValues[i]) && wValues[i] > 0) finiteW.push(wValues[i]);
+    if (isFinite(wValuesX[i]) && wValuesX[i] > 0) finiteW.push(wValuesX[i]);
+    if (isAsymmetric && isFinite(wValuesY[i]) && wValuesY[i] > 0) finiteW.push(wValuesY[i]);
     if (isFinite(RValues[i])) finiteR.push(Math.abs(RValues[i]));
   }
   const maxW = finiteW.length ? Math.max(...finiteW) * 1.15 : 1;
@@ -359,11 +440,11 @@ function drawPlot(canvas, data, lenses, opts) {
 
   if (opts.grid) drawGrid(ctx, M.left, M.top, pW, pH1, zSpan, maxW, 5, 5);
 
-  // Filled envelope over the visible z-range only.
+  // Filled envelope from 0 to wₓ(z).
   ctx.beginPath();
   ctx.moveTo(toX(zValues[i0]), toY1(0));
   for (let i = i0; i <= i1; i++) {
-    const y = toY1(Math.max(wValues[i], 0));
+    const y = toY1(Math.max(wValuesX[i], 0));
     ctx.lineTo(toX(zValues[i]), y);
   }
   for (let i = i1; i >= i0; i--) {
@@ -371,29 +452,88 @@ function drawPlot(canvas, data, lenses, opts) {
     ctx.lineTo(toX(zValues[i]), y);
   }
   ctx.closePath();
-  ctx.fillStyle = 'rgba(59,130,246,0.08)';
+  ctx.fillStyle = 'rgba(59,130,246,0.06)';
   ctx.fill();
 
-  // Upper boundary of the beam (+w(z) curve)
+  // Upper boundary of the beam — wₓ(z)
   ctx.beginPath();
   let wFirst = true;
   for (let i = i0; i <= i1; i++) {
     const x = toX(zValues[i]);
-    const y = toY1(Math.max(wValues[i], 0));
+    const y = toY1(Math.max(wValuesX[i], 0));
     if (wFirst) { ctx.moveTo(x, y); wFirst = false; } else { ctx.lineTo(x, y); }
   }
   ctx.strokeStyle = '#2563eb';
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  // Optional point markers on the beam-boundary curve.
+  // Optional point markers on wₓ(z).
   if (opts.showPoints) {
     ctx.fillStyle = '#2563eb';
     for (let i = i0; i <= i1; i++) {
-      const y = toY1(Math.max(wValues[i], 0));
+      const y = toY1(Math.max(wValuesX[i], 0));
       ctx.beginPath();
       ctx.arc(toX(zValues[i]), y, 2.5, 0, 2 * Math.PI);
       ctx.fill();
+    }
+  }
+
+  // Waist-tracking comparison (dashed) on the w panel.
+  if (dataWT) {
+    const { wValues: wWT, RValues: rWT } = dataWT;
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = '#2563eb';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    let firstWT = true;
+    for (let i = i0; i <= i1; i++) {
+      if (wWT[i] === undefined) continue;
+      const x = toX(zValues[i]);
+      const y = toY1(Math.max(wWT[i], 0));
+      if (firstWT) { ctx.moveTo(x, y); firstWT = false; } else { ctx.lineTo(x, y); }
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Second beam width curve wᵧ(z) for asymmetric beams.
+  if (isAsymmetric) {
+    ctx.beginPath();
+    let wFirstY = true;
+    for (let i = i0; i <= i1; i++) {
+      const x = toX(zValues[i]);
+      const y = toY1(Math.max(wValuesY[i], 0));
+      if (wFirstY) { ctx.moveTo(x, y); wFirstY = false; } else { ctx.lineTo(x, y); }
+    }
+    ctx.strokeStyle = '#d946ef';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    if (opts.showPoints) {
+      ctx.fillStyle = '#d946ef';
+      for (let i = i0; i <= i1; i++) {
+        const y = toY1(Math.max(wValuesY[i], 0));
+        ctx.beginPath();
+        ctx.arc(toX(zValues[i]), y, 2.5, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    }
+    // Waist-tracking dashed comparison on the wᵧ curve.
+    if (dataWT) {
+      const { wValues: wWT } = dataWT;
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = '#d946ef';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      let firstWTy = true;
+      for (let i = i0; i <= i1; i++) {
+        if (wWT[i] === undefined) continue;
+        const x = toX(zValues[i]);
+        const y = toY1(Math.max(wWT[i], 0));
+        if (firstWTy) { ctx.moveTo(x, y); firstWTy = false; } else { ctx.lineTo(x, y); }
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
   }
 
@@ -433,6 +573,24 @@ function drawPlot(canvas, data, lenses, opts) {
     ctx.strokeStyle = '#059669';
     ctx.lineWidth = 1.5;
     ctx.stroke();
+  }
+
+  // Waist markers: an 'x' at every detected beam waist on the w panel.
+  if (opts.waistMarkers) {
+    const { x: xWaists, y: yWaists } = opts.waistMarkers;
+    const drawWaistX = (z, w, color) => {
+      if (z < zMin || z > zMaxDisp) return;
+      const x = toX(z);
+      const y = toY1(Math.max(w, 0));
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(x - 5, y - 5); ctx.lineTo(x + 5, y + 5);
+      ctx.moveTo(x + 5, y - 5); ctx.lineTo(x - 5, y + 5);
+      ctx.stroke();
+    };
+    for (const wx of xWaists) drawWaistX(wx.z, wx.w, '#2563eb');
+    for (const wy of yWaists) drawWaistX(wy.z, wy.w, '#d946ef');
   }
 
   ctx.restore();
@@ -569,12 +727,20 @@ function drawPlot(canvas, data, lenses, opts) {
       const R = RValues[i];
       plotY[i] = useInvR ? (isFinite(R) && Math.abs(R) > 1e-15 ? 1 / R : 0) : R;
     }
+    const plotYy = isAsymmetric ? new Float64Array(zValues.length) : null;
+    if (plotYy) {
+      for (let i = 0; i < zValues.length; i++) {
+        const R = dataY.RValues[i];
+        plotYy[i] = useInvR ? (isFinite(R) && Math.abs(R) > 1e-15 ? 1 / R : 0) : R;
+      }
+    }
 
     // Auto-scale the bottom panel to the visible z-range only,
     // with a fallback minimum span so the axis doesn't collapse.
     const finiteVals = [];
     for (let i = i0; i <= i1; i++) {
       if (isFinite(plotY[i])) finiteVals.push(Math.abs(plotY[i]));
+      if (plotYy && isFinite(plotYy[i])) finiteVals.push(Math.abs(plotYy[i]));
     }
     const maxV = finiteVals.length ? Math.max(...finiteVals) * 1.2 : (useInvR ? 0.01 : 1);
     const yLimit = Math.max(maxV, useInvR ? 0.001 : 1);
@@ -606,6 +772,59 @@ function drawPlot(canvas, data, lenses, opts) {
     ctx.strokeStyle = lineColor;
     ctx.lineWidth = 1.8;
     ctx.stroke();
+
+    // Waist-tracking dashed comparison on the R/1/R panel.
+    if (dataWT) {
+      const { RValues: rWT } = dataWT;
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = lineColor;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      let startedWT = false;
+      for (let i = i0; i <= i1; i++) {
+        const R = rWT[i];
+        if (R === undefined) continue;
+        const v = useInvR ? (isFinite(R) && Math.abs(R) > 1e-15 ? 1 / R : 0) : R;
+        if (!isFinite(v)) { startedWT = false; continue; }
+        const clamped = Math.max(-yLimit, Math.min(yLimit, v));
+        const x = toX(zValues[i]);
+        const y = toY(clamped);
+        if (!startedWT) { ctx.moveTo(x, y); startedWT = true; }
+        else { ctx.lineTo(x, y); }
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // y-direction R/1/R curve for asymmetric beams.
+    if (plotYy) {
+      ctx.beginPath();
+      let startedY = false;
+      for (let i = i0; i <= i1; i++) {
+        const v = plotYy[i];
+        if (!isFinite(v)) { startedY = false; continue; }
+        const clamped = Math.max(-yLimit, Math.min(yLimit, v));
+        const x = toX(zValues[i]);
+        const y = toY(clamped);
+        if (!startedY) { ctx.moveTo(x, y); startedY = true; }
+        else { ctx.lineTo(x, y); }
+      }
+      ctx.strokeStyle = '#d946ef';
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+
+      if (opts.showPoints) {
+        ctx.fillStyle = '#d946ef';
+        for (let i = i0; i <= i1; i++) {
+          const v = plotYy[i];
+          if (!isFinite(v)) continue;
+          const clamped = Math.max(-yLimit, Math.min(yLimit, v));
+          ctx.beginPath();
+          ctx.arc(toX(zValues[i]), toY(clamped), 3, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      }
+    }
 
     // Optional point markers at every visible data sample.
     if (opts.showPoints) {
@@ -642,6 +861,24 @@ function drawPlot(canvas, data, lenses, opts) {
       ctx.setLineDash([4, 4]);
       ctx.stroke();
       ctx.setLineDash([]);
+    }
+
+    // Waist markers on the R / 1/R panel.
+    if (opts.waistMarkers) {
+      const { x: xWaists, y: yWaists } = opts.waistMarkers;
+      const drawWaistX_R = (z, color) => {
+        if (z < zMin || z > zMaxDisp) return;
+        const x = toX(z);
+        const y = useInvR ? toY(0) : toY(yLimit);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.moveTo(x - 5, y - 5); ctx.lineTo(x + 5, y + 5);
+        ctx.moveTo(x + 5, y - 5); ctx.lineTo(x - 5, y + 5);
+        ctx.stroke();
+      };
+      for (const wx of xWaists) drawWaistX_R(wx.z, '#2563eb');
+      for (const wy of yWaists) drawWaistX_R(wy.z, '#d946ef');
     }
 
     ctx.restore();
@@ -685,12 +922,15 @@ function drawPlot(canvas, data, lenses, opts) {
   }
 
   // Legend
+  const showWT = !!dataWT;
+  const legEntries = 1 + (isAsymmetric ? 1 : 0) + (showBottom ? (opts.showPhase ? 1 : (isAsymmetric ? 2 : 1)) : 0) + (showWT ? 1 : 0);
+  const legH = 24 * legEntries;
   const lx = M.left + pW - 120, ly = M.top + 8;
   ctx.fillStyle = 'rgba(255,255,255,0.9)';
-  ctx.fillRect(lx - 8, ly - 4, 128, showBottom ? 44 : 24);
+  ctx.fillRect(lx - 8, ly - 4, 128, legH);
   ctx.strokeStyle = '#e5e7eb';
   ctx.lineWidth = 1;
-  ctx.strokeRect(lx - 8, ly - 4, 128, showBottom ? 44 : 24);
+  ctx.strokeRect(lx - 8, ly - 4, 128, legH);
 
   let lyOff = ly + 2;
   ctx.beginPath();
@@ -703,7 +943,19 @@ function drawPlot(canvas, data, lenses, opts) {
   ctx.font = '11px sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText('w(z)', lx + 26, lyOff + 6);
+  ctx.fillText(isAsymmetric ? 'wₓ(z)' : 'w(z)', lx + 26, lyOff + 6);
+
+  if (isAsymmetric) {
+    lyOff += 20;
+    ctx.beginPath();
+    ctx.moveTo(lx, lyOff + 6);
+    ctx.lineTo(lx + 20, lyOff + 6);
+    ctx.strokeStyle = '#d946ef';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#1f2937';
+    ctx.fillText('wᵧ(z)', lx + 26, lyOff + 6);
+  }
 
   if (opts.showPhase) {
     lyOff += 20;
@@ -724,7 +976,35 @@ function drawPlot(canvas, data, lenses, opts) {
     ctx.lineWidth = 1.8;
     ctx.stroke();
     ctx.fillStyle = '#1f2937';
-    ctx.fillText(opts.showInvR ? '1/R(z)' : 'R(z)', lx + 26, lyOff + 6);
+    ctx.fillText(opts.showInvR ? '1/Rₓ(z)' : 'Rₓ(z)', lx + 26, lyOff + 6);
+    if (isAsymmetric) {
+      lyOff += 20;
+      ctx.beginPath();
+      ctx.moveTo(lx, lyOff + 6);
+      ctx.lineTo(lx + 20, lyOff + 6);
+      ctx.strokeStyle = '#d946ef';
+      ctx.lineWidth = 1.8;
+      ctx.stroke();
+      ctx.fillStyle = '#1f2937';
+      ctx.fillText(opts.showInvR ? '1/Rᵧ(z)' : 'Rᵧ(z)', lx + 26, lyOff + 6);
+    }
+  }
+
+  if (showWT) {
+    lyOff += 20;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(lx, lyOff + 6);
+    ctx.lineTo(lx + 20, lyOff + 6);
+    ctx.strokeStyle = '#6b7280';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('WT (dashed)', lx + 26, lyOff + 6);
   }
 }
 
@@ -756,7 +1036,7 @@ function drawGrid(ctx, ox, oy, w, h, xMax, yRange, nx, ny, yCenter) {
 // z-range to zoom into.  A semi-transparent rectangle is drawn
 // during the drag for visual feedback.
 // ══════════════════════════════════════════════════════════════
-function setupMouseTracking(canvas, data, lenses, opts) {
+function setupMouseTracking(canvas, dataX, lenses, opts, dataY, dataWT) {
   const wrap = document.getElementById('plotWrap');
   const vCursor = document.getElementById('vCursor');
   const info = document.getElementById('cursorInfo');
@@ -772,7 +1052,7 @@ function setupMouseTracking(canvas, data, lenses, opts) {
     const M = { left: 62, right: (opts.showR || opts.showPhase) ? 62 : 18 };
     const pW = rect.width - M.left - M.right;
     const zEffMin = opts.zoomRange ? opts.zoomRange.zMin : 0;
-    const zEffMax = opts.zoomRange ? opts.zoomRange.zMax : data.zMax;
+    const zEffMax = opts.zoomRange ? opts.zoomRange.zMax : dataX.zMax;
     const z = mx < M.left ? zEffMin
             : mx > M.left + pW ? zEffMax
             : zEffMin + ((mx - M.left) / pW) * (zEffMax - zEffMin);
@@ -782,9 +1062,9 @@ function setupMouseTracking(canvas, data, lenses, opts) {
   canvas.addEventListener('mousedown', (e) => {
     if (e.shiftKey) {
       const curMin = opts.zoomRange ? opts.zoomRange.zMin : 0;
-      const curMax = opts.zoomRange ? opts.zoomRange.zMax : data.zMax;
+      const curMax = opts.zoomRange ? opts.zoomRange.zMax : dataX.zMax;
       const expand = (curMax - curMin) * 0.2;
-      zoomRange = { zMin: Math.max(0, curMin - expand), zMax: Math.min(data.zMax, curMax + expand) };
+      zoomRange = { zMin: Math.max(0, curMin - expand), zMax: Math.min(dataX.zMax, curMax + expand) };
       update();
       return;
     }
@@ -809,34 +1089,45 @@ function setupMouseTracking(canvas, data, lenses, opts) {
     }
 
     // Not dragging — show the cursor tooltip.
-    if (p.mx < p.M.left || p.mx > p.M.left + p.pW || !data.zValues) {
+    if (p.mx < p.M.left || p.mx > p.M.left + p.pW || !dataX.zValues) {
       vCursor.style.display = 'none';
       info.style.display = 'none';
       return;
     }
 
     let idx = 0, minDist = Infinity;
-    for (let i = 0; i < data.zValues.length; i++) {
-      const d = Math.abs(data.zValues[i] - p.z);
+    for (let i = 0; i < dataX.zValues.length; i++) {
+      const d = Math.abs(dataX.zValues[i] - p.z);
       if (d < minDist) { minDist = d; idx = i; }
     }
 
-    const zi = data.zValues[idx];
-    const wi = data.wValues[idx];
-    const Ri = data.RValues[idx];
+    const zi = dataX.zValues[idx];
+    const wi = dataX.wValues[idx];
+    const Ri = dataX.RValues[idx];
 
     vCursor.style.display = 'block';
     vCursor.style.left = (p.mx + p.rect.left - wrap.getBoundingClientRect().left) + 'px';
     vCursor.style.height = p.rect.height + 'px';
 
     info.style.display = 'block';
-    const rStr = isFinite(Ri) ? (Math.abs(Ri) > 1e8 ? '∞' : Ri.toFixed(1)) : '∞';
+    const rStr = isFinite(Ri) ? (Math.abs(Ri) > 1e8 ? '∞' : Ri.toExponential(4)) : '∞';
     const invRStr = isFinite(Ri) ? (Math.abs(Ri) > 1e-15 ? (1/Ri).toExponential(4) : '0') : '0';
+    const wy = dataY ? dataY.wValues[idx] : null;
+    const wLine = (wy !== null && isFinite(wy)) ? `wₓ = ${wi.toFixed(4)} mm, wᵧ = ${wy.toFixed(4)} mm` : `w = ${wi.toFixed(4)} mm`;
+    let wtLine = '';
+    if (dataWT) {
+      const wWT = dataWT.wValues[idx];
+      const RWT = dataWT.RValues[idx];
+      if (wWT !== undefined && RWT !== undefined) {
+        const rWTStr = isFinite(RWT) ? (Math.abs(RWT) > 1e8 ? '∞' : RWT.toExponential(4)) : '∞';
+        wtLine = `<span style="color:#6b7280">WT: w = ${wWT.toFixed(4)} mm, R = ${rWTStr} mm</span><br>`;
+      }
+    }
     if (opts.showPhase) {
-      const phi = data.phaseValues[idx];
-      info.innerHTML = `z = ${zi.toFixed(3)} mm<br>w = ${wi.toFixed(4)} mm<br>R = ${rStr} mm, 1/R = ${invRStr} mm⁻¹<br>φ = ${isFinite(phi) ? phi.toFixed(6) : '0'} rad`;
+      const phi = dataX.phaseValues[idx];
+      info.innerHTML = `z = ${zi.toFixed(3)} mm<br>${wLine}<br>R = ${rStr} mm, 1/R = ${invRStr} mm⁻¹<br>${wtLine}φ = ${isFinite(phi) ? phi.toFixed(6) : '0'} rad`;
     } else {
-      info.innerHTML = `z = ${zi.toFixed(3)} mm<br>w = ${wi.toFixed(4)} mm<br>R = ${rStr} mm, 1/R = ${invRStr} mm⁻¹`;
+      info.innerHTML = `z = ${zi.toFixed(3)} mm<br>${wLine}<br>R = ${rStr} mm, 1/R = ${invRStr} mm⁻¹<br>${wtLine}`;
     }
 
     let ix = p.mx + 14;
@@ -852,7 +1143,7 @@ function setupMouseTracking(canvas, data, lenses, opts) {
     if (!dragStart) return;
     const p = posFrom(e.clientX);
     const zEffMin = opts.zoomRange ? opts.zoomRange.zMin : 0;
-    const zEffMax = opts.zoomRange ? opts.zoomRange.zMax : data.zMax;
+    const zEffMax = opts.zoomRange ? opts.zoomRange.zMax : dataX.zMax;
     const dz = Math.abs(p.z - dragStart.z);
     if (dz > (zEffMax - zEffMin) * 0.02) {
       zoomRange = { zMin: Math.min(dragStart.z, p.z), zMax: Math.max(dragStart.z, p.z) };
@@ -884,14 +1175,60 @@ function setupMouseTracking(canvas, data, lenses, opts) {
 // (before the lens) and the last occurrence (after the lens) for
 // each active lens.
 // ══════════════════════════════════════════════════════════════
-function updateResults(data, lenses, totalLen) {
+// Find exact waist positions by interpolating the q-parameter between
+// adjacent samples in free-space segments.  A waist occurs where
+// Re(1/q) = 0, i.e. where R → ∞.  For free-space propagation between
+// samples at z[i] and z[i+1] with q-parameter q at z[i], the exact
+// waist is at z_waist = z[i] - Re(q).
+function findExactWaists(zValues, wValues, RValues, lambda, M2) {
+  const waists = [];
+  for (let i = 0; i < zValues.length - 1; i++) {
+    if (zValues[i + 1] === zValues[i]) continue; // skip lens planes
+    const invRi = isFinite(RValues[i]) && Math.abs(RValues[i]) > 1e-15 ? 1 / RValues[i] : 0;
+    const invRn = isFinite(RValues[i + 1]) && Math.abs(RValues[i + 1]) > 1e-15 ? 1 / RValues[i + 1] : 0;
+    if (invRi * invRn >= 0) continue; // no sign change → no waist between these samples
+    const q_i = reconstructQ(wValues[i], RValues[i], lambda, M2);
+    const zWaist = zValues[i] - q_i[0];
+    if (zWaist < zValues[i] || zWaist > zValues[i + 1]) continue;
+    const qWaist = C.add(q_i, [zWaist - zValues[i], 0]);
+    const wWaist = qToWR(qWaist, lambda, M2).w;
+    waists.push({ z: zWaist, w: wWaist });
+  }
+  return waists;
+}
+
+function updateResults(dataX, lenses, totalLen, dataY, lambda, M2) {
   const tbody = document.getElementById('resultsBody');
+  const thead = document.getElementById('resultsHead');
   const active = lenses.filter(l => l.active).sort((a, b) => a.pos - b.pos);
-  const { zValues, wValues, RValues, phaseValues } = data;
+  const { zValues, wValues: wValuesX, RValues, phaseValues } = dataX;
+  const wValuesY = dataY ? dataY.wValues : null;
+  const isAsymmetric = wValuesY && (wValuesX.length === wValuesY.length);
+
+  // Update table header dynamically.
+  thead.innerHTML = '<tr><th>z (mm)</th><th>Description</th><th>wₓ(z) (mm)</th>'
+    + (isAsymmetric ? '<th>wᵧ(z) (mm)</th>' : '')
+    + '<th>R(z) (mm)</th><th>φ(z) (rad)</th></tr>';
+
   const rows = [];
 
+  // Exact waist finder using q-parameter interpolation.
+  // We detect waists in both x and y propagations when asymmetric.
+  const xWaists = findExactWaists(zValues, wValuesX, RValues, lambda, M2);
+  const yRValues = dataY ? dataY.RValues : null;
+  const yWaists = isAsymmetric ? findExactWaists(zValues, wValuesY, yRValues, lambda, M2) : [];
+  const waistZs = [...new Set([...xWaists.map(w => w.z.toFixed(8)), ...yWaists.map(w => w.z.toFixed(8))])].map(Number).sort((a, b) => a - b);
+  for (const z of waistZs) {
+    const xw = xWaists.find(w => Math.abs(w.z - z) < 1e-6);
+    const yw = yWaists.find(w => Math.abs(w.z - z) < 1e-6);
+    rows.push({ z, desc: 'Beam waist', wx: xw ? xw.w : null, wy: yw ? yw.w : null, R: Infinity, phi: null });
+  }
+
+  // Helper to look up a value at a given z index.
+  const at = (i, wArr) => wArr ? wArr[i] : null;
+
   // Input plane (z = 0 is always the very first sample).
-  rows.push({ z: 0, desc: 'Input plane', w: wValues[0], R: RValues[0], phi: phaseValues[0] });
+  rows.push({ z: 0, desc: 'Input plane', wx: wValuesX[0], wy: at(0, wValuesY), R: RValues[0], phi: phaseValues[0] });
 
   // For each lens, locate the first and last occurrence of its
   // position in zValues.  The first is the value *before* the lens,
@@ -905,20 +1242,30 @@ function updateResults(data, lenses, totalLen) {
       }
     }
     if (iFirst !== -1) {
-      rows.push({ z: lens.pos, desc: `Before lens (f = ${lens.f} mm)`, w: wValues[iFirst], R: RValues[iFirst], phi: phaseValues[iFirst] });
+      const fmtF = (v) => v ? v + '' : '∞';
+      const fDesc = (lens.fx !== lens.fy) ? `fₓ=${fmtF(lens.fx)}, fᵧ=${fmtF(lens.fy)} mm` : `f=${fmtF(lens.fx)} mm`;
+      rows.push({ z: lens.pos, desc: `Before lens (${fDesc})`, wx: wValuesX[iFirst], wy: at(iFirst, wValuesY), R: RValues[iFirst], phi: phaseValues[iFirst] });
       if (iLast > iFirst) {
-        rows.push({ z: lens.pos, desc: `After lens (f = ${lens.f} mm)`, w: wValues[iLast], R: RValues[iLast], phi: phaseValues[iLast] });
+        rows.push({ z: lens.pos, desc: `After lens (${fDesc})`, wx: wValuesX[iLast], wy: at(iLast, wValuesY), R: RValues[iLast], phi: phaseValues[iLast] });
       }
     }
   }
 
   // Output plane (last sampled point).
   const last = zValues.length - 1;
-  rows.push({ z: zValues[last], desc: 'Output plane', w: wValues[last], R: RValues[last], phi: phaseValues[last] });
+  rows.push({ z: zValues[last], desc: 'Output plane', wx: wValuesX[last], wy: at(last, wValuesY), R: RValues[last], phi: phaseValues[last] });
+
+  // Sort by z; stable sort preserves before/after ordering for same-z rows.
+  rows.sort((a, b) => a.z - b.z);
 
   tbody.innerHTML = rows.map(r => {
-    const rStr = isFinite(r.R) ? (Math.abs(r.R) > 1e8 ? '∞' : r.R.toFixed(1)) : '∞';
-    return `<tr><td>${r.z.toFixed(1)}</td><td>${r.desc}</td><td>${r.w.toFixed(4)}</td><td>${rStr}</td><td>${r.phi.toFixed(6)}</td></tr>`;
+    const rStr = r.desc === 'Beam waist' ? '∞' : (isFinite(r.R) ? (Math.abs(r.R) > 1e8 ? '∞' : r.R.toFixed(1)) : '∞');
+    const phiStr = r.phi !== null ? r.phi.toFixed(6) : '-';
+    const wXStr = r.wx !== null ? r.wx.toFixed(4) : '-';
+    const wYStr = isAsymmetric && r.wy !== null ? r.wy.toFixed(4) : (isAsymmetric ? '-' : '');
+    return `<tr><td>${r.z.toFixed(4)}</td><td>${r.desc}</td><td>${wXStr}</td>`
+      + (isAsymmetric ? `<td>${wYStr}</td>` : '')
+      + `<td>${rStr}</td><td>${phiStr}</td></tr>`;
   }).join('');
 }
 
@@ -935,7 +1282,7 @@ function updateResults(data, lenses, totalLen) {
 // get the current state.  renderLenses() rebuilds the DOM from
 // lensData.
 // ══════════════════════════════════════════════════════════════
-let lensData = [{ pos: 80, f: 60, active: true }];
+let lensData = [{ pos: 100, fx: 25, fy: 25, active: true }, { pos: 200, fx: 75, fy: 75, active: true }];
 let zoomRange = null;
 
 function syncLensDataFromDOM() {
@@ -943,7 +1290,8 @@ function syncLensDataFromDOM() {
   if (rows.length) {
     lensData = Array.from(rows).map(row => ({
       pos: parseFloat(row.querySelector('.lens-pos').value),
-      f: parseFloat(row.querySelector('.lens-f').value),
+      fx: parseFloat(row.querySelector('.lens-fx').value),
+      fy: parseFloat(row.querySelector('.lens-fy').value),
       active: row.querySelector('.lens-active').checked
     }));
   }
@@ -953,7 +1301,8 @@ function readLenses() {
   const rows = document.querySelectorAll('#lensContainer .lens-row');
   return Array.from(rows).map(row => ({
     pos: parseFloat(row.querySelector('.lens-pos').value),
-    f: parseFloat(row.querySelector('.lens-f').value),
+    fx: parseFloat(row.querySelector('.lens-fx').value),
+    fy: parseFloat(row.querySelector('.lens-fy').value),
     active: row.querySelector('.lens-active').checked
   }));
 }
@@ -967,7 +1316,8 @@ function renderLenses() {
     const canRemove = lensData.length > 1;
     row.innerHTML = '<span class="lens-label">Lens ' + (i + 1) + '</span>'
       + '<div class="field"><label>Pos (mm)</label><input type="number" class="lens-pos" value="' + lens.pos + '" step="5"></div>'
-      + '<div class="field"><label>f (mm)</label><input type="number" class="lens-f" value="' + lens.f + '" step="5"></div>'
+      + '<div class="field"><label>fₓ (mm)</label><input type="number" class="lens-fx" value="' + lens.fx + '" step="5"></div>'
+      + '<div class="field"><label>fᵧ (mm)</label><input type="number" class="lens-fy" value="' + lens.fy + '" step="5"></div>'
       + '<div class="field"><label><input type="checkbox" class="lens-active"' + (lens.active ? ' checked' : '') + '> On</label></div>'
       + (canRemove ? '<button class="lens-remove" data-idx="' + i + '">×</button>' : '');
     container.appendChild(row);
@@ -996,7 +1346,10 @@ function renderLenses() {
 function update() {
   const wavelength = parseFloat(document.getElementById('wavelength').value) * 1e-6;
   const w0 = parseFloat(document.getElementById('w0').value);
+  const w0y = parseFloat(document.getElementById('w0y').value);
+  const M2 = parseFloat(document.getElementById('M2').value);
   const R0 = parseFloat(document.getElementById('R0').value);
+  const R0y = parseFloat(document.getElementById('R0y').value);
   const totalLen = parseFloat(document.getElementById('totalLength').value);
   const nSamples = parseInt(document.getElementById('samples').value);
   const showR = document.getElementById('showR').checked;
@@ -1004,16 +1357,25 @@ function update() {
   const showInvR = document.getElementById('showInvR').checked;
   const showPhase = document.getElementById('showPhase').checked;
   const showPoints = document.getElementById('showPoints').checked;
+  const showWaistTrack = document.getElementById('showWaistTrack').checked;
 
   const lenses = readLenses();
 
   if (!w0 || w0 <= 0 || !totalLen || totalLen <= 0 || !nSamples || nSamples < 10) return;
 
-  const data = propagate(wavelength, w0, R0, lenses, totalLen, nSamples);
+  const lensesX = lenses.map(l => ({ pos: l.pos, f: l.fx, active: l.active }));
+  const lensesY = lenses.map(l => ({ pos: l.pos, f: l.fy, active: l.active }));
+  const dataX = propagate(wavelength, w0, R0, lensesX, totalLen, nSamples, M2);
+  const hasAstigmaticLenses = lenses.some(l => l.fx !== l.fy);
+  const dataY = (w0y !== w0 || R0y !== R0 || hasAstigmaticLenses) ? propagate(wavelength, w0y, R0y, lensesY, totalLen, nSamples, M2) : null;
+  const dataWT = showWaistTrack ? propagateWaistTracking(dataX.zValues, w0, R0, lensesX, wavelength, M2) : null;
+  const xWaists = findExactWaists(dataX.zValues, dataX.wValues, dataX.RValues, wavelength, M2);
+  const yWaists = dataY ? findExactWaists(dataX.zValues, dataY.wValues, dataY.RValues, wavelength, M2) : [];
+  const waistMarkers = { x: xWaists, y: yWaists };
   const canvas = document.getElementById('plotCanvas');
-  drawPlot(canvas, data, lenses, { showR, showGrid, showInvR, showPhase, showPoints, zoomRange });
-  setupMouseTracking(canvas, data, lenses, { showR, showInvR, showPhase, zoomRange });
-  updateResults(data, lenses, totalLen);
+  drawPlot(canvas, dataX, lenses, { showR, showGrid, showInvR, showPhase, showPoints, zoomRange, waistMarkers }, dataY, dataWT);
+  setupMouseTracking(canvas, dataX, lenses, { showR, showInvR, showPhase, zoomRange }, dataY, dataWT);
+  updateResults(dataX, lenses, totalLen, dataY, wavelength, M2);
 
   // Show the Reset Zoom button only when a zoom is active.
   document.getElementById('resetZoomBtn').style.display = zoomRange ? '' : 'none';
@@ -1044,7 +1406,7 @@ document.getElementById('addLensBtn').addEventListener('click', () => {
   if (lensData.length >= 10) return;
   syncLensDataFromDOM();
   const lastPos = lensData.length > 0 ? lensData[lensData.length - 1].pos : 0;
-  lensData.push({ pos: lastPos + 80, f: 60, active: true });
+  lensData.push({ pos: lastPos + 80, fx: 60, fy: 60, active: true });
   renderLenses();
   update();
 });
@@ -1058,10 +1420,10 @@ document.querySelectorAll('input').forEach(inp => {
 // Dynamic lens inputs use event delegation because they are recreated
 // every time the lens list changes.
 document.getElementById('lensContainer').addEventListener('change', (e) => {
-  if (e.target.matches('.lens-pos, .lens-f, .lens-active')) update();
+  if (e.target.matches('.lens-pos, .lens-fx, .lens-fy, .lens-active')) update();
 });
 document.getElementById('lensContainer').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && e.target.matches('.lens-pos, .lens-f')) update();
+  if (e.key === 'Enter' && e.target.matches('.lens-pos, .lens-fx, .lens-fy')) update();
 });
 
 // Bootstrap: render the initial single-lens controls, then run the
