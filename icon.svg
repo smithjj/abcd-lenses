@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="64" fill="#1e293b"/>
+  <g transform="translate(80,180)" fill="none" stroke="#3b82f6" stroke-width="6" stroke-linecap="round">
+    <path d="M0,0 Q88,-60 176,0" opacity="0.4"/>
+    <path d="M0,40 Q88,-20 176,40" opacity="0.6"/>
+    <path d="M0,80 Q88,20 176,80"/>
+  </g>
+  <line x1="256" y1="180" x2="256" y2="332" stroke="#059669" stroke-width="5" stroke-dasharray="8,6"/>
+  <path d="M256,180 L240,156 M256,180 L272,156 M256,332 L240,356 M256,332 L272,356" stroke="#059669" stroke-width="4" stroke-linecap="round"/>
+  <g transform="translate(80,360)" fill="none" stroke="#3b82f6" stroke-width="5" stroke-linecap="round">
+    <path d="M0,0 Q88,-45 176,0" opacity="0.3"/>
+    <path d="M0,30 Q88,-15 176,30" opacity="0.5"/>
+    <path d="M0,60 Q88,15 176,60"/>
+  </g>
+  <text x="420" y="460" font-family="system-ui,sans-serif" font-size="36" fill="#6b7280" text-anchor="end" font-weight="600">ABCD</text>
+</svg>

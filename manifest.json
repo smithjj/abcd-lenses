@@ -1,0 +1,17 @@
+{
+  "name": "ABCD Gaussian Beam Propagator",
+  "short_name": "ABCD Beam",
+  "description": "Simulate Gaussian beam propagation through paraxial optical systems using ABCD ray-transfer matrices.",
+  "start_url": "abcd-beam-propagator.html",
+  "display": "standalone",
+  "background_color": "#f0f2f5",
+  "theme_color": "#1e293b",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
