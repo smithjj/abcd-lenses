@@ -1049,13 +1049,17 @@ document.getElementById('addLensBtn').addEventListener('click', () => {
   update();
 });
 
-// Enter key triggers recalculation.
-// Static inputs (beam parameters) are wired directly.
+// Change (spinner arrows, Enter, blur) triggers recalculation.
+// Static inputs are wired directly.
 document.querySelectorAll('input').forEach(inp => {
+  inp.addEventListener('change', update);
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') update(); });
 });
 // Dynamic lens inputs use event delegation because they are recreated
 // every time the lens list changes.
+document.getElementById('lensContainer').addEventListener('change', (e) => {
+  if (e.target.matches('.lens-pos, .lens-f, .lens-active')) update();
+});
 document.getElementById('lensContainer').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target.matches('.lens-pos, .lens-f')) update();
 });
