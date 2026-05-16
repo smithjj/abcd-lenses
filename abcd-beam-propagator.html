@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ABCD Gaussian Beam Propagator</title>
+<style>
+/* ── Page layout ── */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; color: #1a1a2e; padding: 20px; }
+.container { max-width: 1100px; margin: 0 auto; background: #fff; border-radius: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.08); padding: 28px; }
+h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; margin-bottom: 6px; }
+.subtitle { font-size: 13px; color: #6b7280; margin-bottom: 24px; }
+
+/* ── Input controls ── */
+.controls { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 20px; }
+.control-group { flex: 1; min-width: 240px; }
+.control-group h3 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 2px solid #eef2f6; }
+.field { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 6px; }
+.field label { min-width: 120px; color: #374151; }
+.field input[type="number"] { width: 90px; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 5px; font-size: 13px; transition: border-color .15s; }
+.field input[type="number"]:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
+
+/* ── Lens rows (dynamic) ── */
+.lens-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 0; border-bottom: 1px solid #f3f4f6; }
+.lens-row:last-child { border-bottom: none; }
+.lens-label { font-weight: 600; font-size: 13px; min-width: 48px; color: #374151; }
+.lens-row .field { margin-bottom: 0; }
+.lens-row .field label { min-width: auto; font-size: 12px; color: #6b7280; }
+.lens-row input[type="number"] { width: 72px; }
+
+/* ── Action bar ── */
+.actions { display: flex; align-items: center; gap: 16px; margin: 16px 0 20px; flex-wrap: wrap; }
+.btn { padding: 8px 24px; background: #3b82f6; color: #fff; border: none; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background .15s; }
+.btn:hover { background: #2563eb; }
+.btn:active { background: #1d4ed8; }
+.toggle-label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #374151; cursor: pointer; }
+.toggle-label input { margin: 0; }
+/* ── Add / remove lens buttons ── */
+.btn-add-lens { padding: 2px 10px; background: #3b82f6; color: #fff; border: none; border-radius: 4px; font-size: 11px; cursor: pointer; margin-left: 10px; vertical-align: middle; font-weight: 500; }
+.btn-add-lens:hover { background: #2563eb; }
+.lens-remove { background: none; border: none; color: #ef4444; font-size: 18px; cursor: pointer; padding: 0 6px; line-height: 1; font-weight: 700; transition: color .15s; }
+.lens-remove:hover { color: #dc2626; }
+
+/* ── Plot canvas & overlays ── */
+.plot-wrap { position: relative; width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; background: #fafbfc; }
+canvas { width: 100%; height: 520px; display: block; cursor: crosshair; }
+.v-cursor { position: absolute; top: 0; width: 1px; background: rgba(0,0,0,0.25); pointer-events: none; display: none; }
+.cursor-info { position: absolute; background: rgba(30,30,40,0.88); color: #fff; padding: 8px 14px; border-radius: 6px; font-size: 12px; line-height: 1.5; pointer-events: none; display: none; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ── Results table ── */
+.results { margin-top: 18px; }
+.results h3 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; margin-bottom: 8px; }
+.results table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.results th, .results td { padding: 7px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; }
+.results th { font-weight: 600; color: #6b7280; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; background: #f9fafb; }
+.results td { color: #1f2937; }
+.results tr:last-child td { border-bottom: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>ABCD Gaussian Beam Propagator</h1>
+  <div class="subtitle">Ray-transfer-matrix analysis of Gaussian beam propagation through paraxial optical systems</div>
+
+  <div class="controls">
+    <div class="control-group">
+      <h3>Beam Parameters</h3>
+      <div class="field"><label>Wavelength λ (nm)</label><input type="number" id="wavelength" value="633" min="1" step="1"></div>
+      <div class="field"><label>Initial width w₀ (mm)</label><input type="number" id="w0" value="0.5" min="0.001" step="0.01"></div>
+      <div class="field"><label>Initial R₀ (mm)</label><input type="number" id="R0" value="0" step="10" title="0 = infinite (plane wavefront)"></div>
+      <div class="field"><label>Total length (mm)</label><input type="number" id="totalLength" value="300" min="1" step="10"></div>
+      <div class="field"><label>Samples</label><input type="number" id="samples" value="600" min="50" max="5000" step="50"></div>
+    </div>
+    <div class="control-group">
+      <h3>Lenses <button class="btn-add-lens" id="addLensBtn">+ Add Lens</button></h3>
+      <div id="lensContainer"></div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="recalcBtn">Recalculate</button>
+    <label class="toggle-label"><input type="checkbox" id="showR" checked> Show R(z)</label>
+    <label class="toggle-label"><input type="checkbox" id="showGrid" checked> Grid</label>
+    <label class="toggle-label"><input type="checkbox" id="showInvR"> Show 1/R(z)</label>
+  </div>
+
+  <div class="plot-wrap" id="plotWrap">
+    <canvas id="plotCanvas"></canvas>
+    <div class="v-cursor" id="vCursor"></div>
+    <div class="cursor-info" id="cursorInfo"></div>
+  </div>
+
+  <div class="results" id="resultsPanel">
+    <h3>Beam at Key Positions</h3>
+    <table><thead><tr><th>z (mm)</th><th>Description</th><th>w(z) (mm)</th><th>R(z) (mm)</th></tr></thead><tbody id="resultsBody"></tbody></table>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════
+// Complex number arithmetic (stored as [real, imag] arrays)
+// ══════════════════════════════════════════════════════════════
+const C = {
+  re: (c) => c[0],
+  im: (c) => c[1],
+  conj: (c) => [c[0], -c[1]],
+  add: (a, b) => [a[0] + b[0], a[1] + b[1]],
+  sub: (a, b) => [a[0] - b[0], a[1] - b[1]],
+  mul: (a, b) => [a[0]*b[0] - a[1]*b[1], a[0]*b[1] + a[1]*b[0]],
+  div: (a, b) => { const d = b[0]*b[0] + b[1]*b[1]; return [(a[0]*b[0] + a[1]*b[1])/d, (a[1]*b[0] - a[0]*b[1])/d]; },
+  scale: (c, s) => [c[0]*s, c[1]*s],
+  abs: (c) => Math.sqrt(c[0]*c[0] + c[1]*c[1]),
+  inv: (c) => { const d = c[0]*c[0] + c[1]*c[1]; return [c[0]/d, -c[1]/d]; }
+};
+
+// ══════════════════════════════════════════════════════════════
+// ABCD ray-transfer matrices
+//
+// Free-space propagation over distance d:
+//   M(d) = [[1, d], [0, 1]]
+//
+// Thin lens of focal length f:
+//   M(f) = [[1, 0], [-1/f, 1]]
+//
+// Matrices compose by multiplication: M_total = M_N * ... * M_1
+// (rightmost matrix is applied first).
+// ══════════════════════════════════════════════════════════════
+function matId() { return [[1,0],[0,1]]; }
+function matFree(d) { return [[1,d],[0,1]]; }
+function matLens(f) { return [[1,0],[-1/f,1]]; }
+function matMul(A, B) {
+  return [
+    [A[0][0]*B[0][0] + A[0][1]*B[1][0], A[0][0]*B[0][1] + A[0][1]*B[1][1]],
+    [A[1][0]*B[0][0] + A[1][1]*B[1][0], A[1][0]*B[0][1] + A[1][1]*B[1][1]]
+  ];
+}
+
+// Apply an ABCD matrix to the complex beam parameter q.
+// The q-parameter transforms as:
+//   q' = (A*q + B) / (C*q + D)
+function applyABCD(M, q) {
+  const a = M[0][0], b = M[0][1], c = M[1][0], d = M[1][1];
+  return C.div(C.add(C.scale(q, a), [b,0]), C.add(C.scale(q, c), [d,0]));
+}
+
+// ══════════════════════════════════════════════════════════════
+// Gaussian beam physics
+//
+// The complex beam parameter q = z + i*z_R encodes both the
+// beam width w(z) and radius of curvature R(z) via:
+//   1/q = 1/R - i*λ / (π * w²)
+// ══════════════════════════════════════════════════════════════
+
+// Compute the initial q-parameter from waist w₀ and R₀.
+// R₀ = 0 is treated as ∞ (plane wavefront at z = 0).
+function initQ(lambda, w0, R0) {
+  const absR0 = Math.abs(R0);
+  const invR = absR0 < 1e-12 ? 0 : 1/R0;
+  const invQ = [invR, -lambda / (Math.PI * w0 * w0)];
+  return C.inv(invQ);
+}
+
+// Extract the beam width w and radius of curvature R from q.
+function qToWR(q, lambda) {
+  const invQ = C.inv(q);
+  const invR = invQ[0];
+  const invW2 = -invQ[1] * Math.PI / lambda;
+  if (invW2 <= 0) return { w: Infinity, R: Math.abs(invR) < 1e-15 ? Infinity : 1/invR };
+  const w = 1 / Math.sqrt(invW2);
+  const R = Math.abs(invR) < 1e-15 ? Infinity : 1/invR;
+  return { w, R };
+}
+
+// ══════════════════════════════════════════════════════════════
+// Propagation engine
+//
+// For each sample point z, we build the cumulative ABCD matrix
+// from z = 0 → z by walking through the active lenses in order.
+// The matrix product is:
+//   M_total = M_free(last→z) * M_lens * M_free(prev→lens) * ...
+// ══════════════════════════════════════════════════════════════
+function propagate(lambda, w0, R0, lenses, totalLen, nSamples) {
+  const active = lenses.filter(l => l.active).sort((a, b) => a.pos - b.pos);
+  const zValues = new Float64Array(nSamples);
+  const wValues = new Float64Array(nSamples);
+  const RValues = new Float64Array(nSamples);
+
+  const q0 = initQ(lambda, w0, R0);
+  const zMax = Math.max(totalLen, ...(active.length ? active.map(l => l.pos) : [0]));
+
+  for (let i = 0; i < nSamples; i++) {
+    const z = (i / (nSamples - 1)) * zMax;
+    zValues[i] = z;
+
+    let M = matId();
+    let prev = 0;
+    for (const lens of active) {
+      if (lens.pos > z) break;
+      if (lens.pos > prev) { M = matMul(matFree(lens.pos - prev), M); prev = lens.pos; }
+      M = matMul(matLens(lens.f), M);
+    }
+    if (z > prev) { M = matMul(matFree(z - prev), M); }
+
+    const q = applyABCD(M, q0);
+    const { w, R } = qToWR(q, lambda);
+    wValues[i] = w;
+    RValues[i] = R;
+  }
+  return { zValues, wValues, RValues, zMax };
+}
+
+// ══════════════════════════════════════════════════════════════
+// Canvas rendering
+//
+// The plot is split into two vertically stacked panels:
+//   Top  (65 %) – beam width w(z) with filled envelope
+//   Bottom (35 %) – radius of curvature R(z) (or 1/R(z))
+//
+// Axes auto-scale to the data range with 15 % headroom.
+// Lens positions are marked with dashed vertical lines and a
+// double-headed arrow symbol at the top of the w(z) panel.
+// ══════════════════════════════════════════════════════════════
+function drawPlot(canvas, data, lenses, opts) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+
+  const { zValues, wValues, RValues, zMax } = data;
+  const active = lenses.filter(l => l.active).sort((a, b) => a.pos - b.pos);
+
+  // Two-panel layout with margins for axis labels.
+  // The right margin is wider when the R(z) panel is shown (needs a y-axis label).
+  const M = { top: 36, bottom: 36, left: 62, right: opts.showR ? 62 : 18, gap: 4 };
+  const pW = W - M.left - M.right;
+  const pH1 = (H - M.top - M.bottom - M.gap) * 0.65;
+  const pH2 = (H - M.top - M.bottom - M.gap) * 0.35;
+
+  // Auto-scale y-axes: find the max finite value, then add 15–20 % headroom.
+  // Non-finite values (Infinity from waists / poles) are excluded from the range
+  // so they don't collapse the visible scale.
+  const finiteW = [];
+  const finiteR = [];
+  for (let i = 0; i < zValues.length; i++) {
+    if (isFinite(wValues[i]) && wValues[i] > 0) finiteW.push(wValues[i]);
+    if (isFinite(RValues[i])) finiteR.push(Math.abs(RValues[i]));
+  }
+  const maxW = finiteW.length ? Math.max(...finiteW) * 1.15 : 1;
+  const minW = 0;
+  const maxRVal = finiteR.length ? Math.max(...finiteR) : 1;
+  const rLimit = Math.max(maxRVal * 1.2, 1);
+
+  // Utility: map data to canvas coords
+  const toX = (z) => M.left + (z / zMax) * pW;
+  const toY1 = (w) => M.top + pH1 * (1 - w / maxW);
+  const toY2 = (R) => M.top + pH1 + M.gap + pH2 * (0.5 - R / (2 * rLimit));
+
+  // Clear
+  ctx.clearRect(0, 0, W, H);
+
+  // --- Plot 1: w(z) ---
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(M.left, M.top, pW, pH1);
+  ctx.clip();
+
+  if (opts.grid) drawGrid(ctx, M.left, M.top, pW, pH1, zMax, maxW, 5, 5);
+
+  // Filled envelope: trace the upper boundary (+w), then return along the
+  // zero axis (w=0) to create a closed polygon that fills the beam profile.
+  ctx.beginPath();
+  ctx.moveTo(toX(zValues[0]), toY1(0));
+  for (let i = 0; i < zValues.length; i++) {
+    const y = toY1(Math.max(wValues[i], 0));
+    ctx.lineTo(toX(zValues[i]), y);
+  }
+  for (let i = zValues.length - 1; i >= 0; i--) {
+    const y = toY1(0);
+    ctx.lineTo(toX(zValues[i]), y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(59,130,246,0.08)';
+  ctx.fill();
+
+  // Upper boundary of the beam (+w(z) curve)
+  ctx.beginPath();
+  for (let i = 0; i < zValues.length; i++) {
+    const x = toX(zValues[i]);
+    const y = toY1(Math.max(wValues[i], 0));
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = '#2563eb';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Lens markers on the w(z) panel: a dashed vertical line at the lens
+  // position, topped with a double-headed arrow as the conventional
+  // thin-lens symbol.
+  for (const lens of active) {
+    const x = toX(lens.pos);
+    ctx.beginPath();
+    ctx.moveTo(x, M.top);
+    ctx.lineTo(x, M.top + pH1);
+    ctx.strokeStyle = '#059669';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Arrow head with two barbs
+    const ly = M.top + 12;
+    ctx.beginPath();
+    ctx.moveTo(x - 8, ly);
+    ctx.lineTo(x + 8, ly);
+    ctx.strokeStyle = '#059669';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x - 5, ly - 4);
+    ctx.lineTo(x - 8, ly);
+    ctx.lineTo(x - 5, ly + 4);
+    ctx.strokeStyle = '#059669';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x + 5, ly - 4);
+    ctx.lineTo(x + 8, ly);
+    ctx.lineTo(x + 5, ly + 4);
+    ctx.strokeStyle = '#059669';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  ctx.restore();
+
+  // Axis labels (plot 1)
+  ctx.fillStyle = '#6b7280';
+  ctx.font = '12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('Beam width w(z) [mm]', M.left + pW / 2, M.top - 6);
+  // Y-axis label
+  ctx.save();
+  ctx.translate(14, M.top + pH1 / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = 'center';
+  ctx.fillText('w(z) [mm]', 0, 0);
+  ctx.restore();
+  // Y-axis tick labels
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  ctx.font = '10px sans-serif';
+  const nYTicks1 = 5;
+  for (let i = 0; i <= nYTicks1; i++) {
+    const val = (i / nYTicks1) * maxW;
+    const y = toY1(val);
+    ctx.fillText(val.toFixed(2), M.left - 6, y);
+  }
+
+  // --- Bottom panel: R(z) or 1/R(z) ---
+  // When showInvR is checked the panel plots 1/R(z) instead of R(z),
+  // which can be more informative near beam waists (where R → ∞, 1/R → 0).
+  if (opts.showR) {
+    const useInvR = opts.showInvR;
+
+    // Compute the y-axis values from the raw R data.
+    // At a waist R = ∞ → 1/R = 0; near a focus R ≈ 0 → 1/R is clipped.
+    const plotY = new Float64Array(zValues.length);
+    for (let i = 0; i < zValues.length; i++) {
+      const R = RValues[i];
+      plotY[i] = useInvR ? (isFinite(R) && Math.abs(R) > 1e-15 ? 1 / R : 0) : R;
+    }
+
+    // Auto-scale the bottom panel, with a fallback minimum span so
+    // the axis doesn't collapse for near-zero ranges.
+    const finiteVals = [];
+    for (let i = 0; i < plotY.length; i++) {
+      if (isFinite(plotY[i])) finiteVals.push(Math.abs(plotY[i]));
+    }
+    const maxV = finiteVals.length ? Math.max(...finiteVals) * 1.2 : (useInvR ? 0.01 : 1);
+    const yLimit = Math.max(maxV, useInvR ? 0.001 : 1);
+
+    const yLabel = useInvR ? '1/R(z) [1/mm]' : 'Radius of curvature R(z) [mm]';
+    const yShort = useInvR ? '1/R [1/mm]' : 'R [mm]';
+    const lineColor = useInvR ? '#7c3aed' : '#dc2626';
+    const toY = (v) => M.top + pH1 + M.gap + pH2 * (0.5 - v / (2 * yLimit));
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(M.left, M.top + pH1 + M.gap, pW, pH2);
+    ctx.clip();
+
+    if (opts.grid) drawGrid(ctx, M.left, M.top + pH1 + M.gap, pW, pH2, zMax, 2 * yLimit, 5, 5, 0);
+
+    // Draw the curve, skipping non-finite samples (the pen jumps to
+    // avoid drawing across poles) and clamping to the y-axis range.
+    ctx.beginPath();
+    let started = false;
+    for (let i = 0; i < plotY.length; i++) {
+      const v = plotY[i];
+      if (!isFinite(v)) { started = false; continue; }
+      const clamped = Math.max(-yLimit, Math.min(yLimit, v));
+      const x = toX(zValues[i]);
+      const y = toY(clamped);
+      if (!started) { ctx.moveTo(x, y); started = true; }
+      else { ctx.lineTo(x, y); }
+    }
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+
+    // Dashed horizontal line at y = 0 as a visual reference.
+    const y0 = toY(0);
+    ctx.beginPath();
+    ctx.moveTo(M.left, y0);
+    ctx.lineTo(M.left + pW, y0);
+    ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    for (const lens of active) {
+      const x = toX(lens.pos);
+      ctx.beginPath();
+      ctx.moveTo(x, M.top + pH1 + M.gap);
+      ctx.lineTo(x, M.top + pH1 + M.gap + pH2);
+      ctx.strokeStyle = '#059669';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    ctx.restore();
+
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(yLabel, M.left + pW / 2, M.top + pH1 + M.gap - 4);
+    ctx.save();
+    ctx.translate(14, M.top + pH1 + M.gap + pH2 / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center';
+    ctx.fillText(yShort, 0, 0);
+    ctx.restore();
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.font = '10px sans-serif';
+    const nYTicks2 = 5;
+    for (let i = 0; i <= nYTicks2; i++) {
+      const val = -yLimit + (i / nYTicks2) * 2 * yLimit;
+      const y = toY(val);
+      ctx.fillText(val.toFixed(useInvR ? 4 : 0), M.left - 6, y);
+    }
+  }
+
+  // X-axis label
+  ctx.fillStyle = '#6b7280';
+  ctx.font = '12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText('Optical axis z [mm]', M.left + pW / 2, H - M.bottom + 6);
+
+  // X-axis ticks
+  ctx.textBaseline = 'top';
+  ctx.font = '10px sans-serif';
+  const nXTicks = 8;
+  for (let i = 0; i <= nXTicks; i++) {
+    const val = (i / nXTicks) * zMax;
+    const x = toX(val);
+    ctx.fillText(val.toFixed(0), x, H - M.bottom + 20);
+  }
+
+  // Legend
+  const lx = M.left + pW - 120, ly = M.top + 8;
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.fillRect(lx - 8, ly - 4, 128, opts.showR ? 44 : 24);
+  ctx.strokeStyle = '#e5e7eb';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(lx - 8, ly - 4, 128, opts.showR ? 44 : 24);
+
+  let lyOff = ly + 2;
+  ctx.beginPath();
+  ctx.moveTo(lx, lyOff + 6);
+  ctx.lineTo(lx + 20, lyOff + 6);
+  ctx.strokeStyle = '#2563eb';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = '#1f2937';
+  ctx.font = '11px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('w(z)', lx + 26, lyOff + 6);
+
+  if (opts.showR) {
+    lyOff += 20;
+    ctx.beginPath();
+    ctx.moveTo(lx, lyOff + 6);
+    ctx.lineTo(lx + 20, lyOff + 6);
+    ctx.strokeStyle = opts.showInvR ? '#7c3aed' : '#dc2626';
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+    ctx.fillStyle = '#1f2937';
+    ctx.fillText(opts.showInvR ? '1/R(z)' : 'R(z)', lx + 26, lyOff + 6);
+  }
+}
+
+// Draw a light Cartesian grid inside the given rectangular region.
+// nx, ny control the number of divisions along each axis.
+// yCenter defines the mid-point of the y-range (default 0).
+function drawGrid(ctx, ox, oy, w, h, xMax, yRange, nx, ny, yCenter) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(0,0,0,0.06)';
+  ctx.lineWidth = 1;
+  yCenter = yCenter || 0;
+  for (let i = 0; i <= nx; i++) {
+    const x = ox + (i / nx) * w;
+    ctx.beginPath(); ctx.moveTo(x, oy); ctx.lineTo(x, oy + h); ctx.stroke();
+  }
+  for (let i = 0; i <= ny; i++) {
+    const val = yCenter - yRange / 2 + (i / ny) * yRange;
+    const y = oy + h * (1 - (val - (yCenter - yRange / 2)) / yRange);
+    ctx.beginPath(); ctx.moveTo(ox, y); ctx.lineTo(ox + w, y); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ══════════════════════════════════════════════════════════════
+// Mouse tracking overlay
+//
+// When the user hovers over the plot canvas a vertical cursor line
+// follows the mouse and a tooltip box shows the exact numerical
+// values of z, w(z), and R(z) (or 1/R(z)) at the nearest sample point.
+// ══════════════════════════════════════════════════════════════
+function setupMouseTracking(canvas, data, lenses, opts) {
+  const wrap = document.getElementById('plotWrap');
+  const vCursor = document.getElementById('vCursor');
+  const info = document.getElementById('cursorInfo');
+
+  function onMove(e) {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const M = { left: 62, right: opts.showR ? 62 : 18 };
+    const pW = rect.width - M.left - M.right;
+    const zMax = data.zMax;
+    const z = ((mx - M.left) / pW) * zMax;
+
+    if (mx < M.left || mx > M.left + pW || !data.zValues) {
+      vCursor.style.display = 'none';
+      info.style.display = 'none';
+      return;
+    }
+
+    // Find nearest sample
+    let idx = 0;
+    let minDist = Infinity;
+    for (let i = 0; i < data.zValues.length; i++) {
+      const d = Math.abs(data.zValues[i] - z);
+      if (d < minDist) { minDist = d; idx = i; }
+    }
+
+    const zi = data.zValues[idx];
+    const wi = data.wValues[idx];
+    const Ri = data.RValues[idx];
+
+    vCursor.style.display = 'block';
+    vCursor.style.left = (mx + rect.left - wrap.getBoundingClientRect().left) + 'px';
+    vCursor.style.height = rect.height + 'px';
+
+    const showInvR = opts.showInvR;
+    const rStr = showInvR
+      ? (isFinite(Ri) ? (Math.abs(Ri) > 1e-15 ? (1/Ri).toFixed(6) : '0') : '0')
+      : (isFinite(Ri) ? (Math.abs(Ri) > 1e6 ? '∞' : Ri.toFixed(1)) : '∞');
+    const rLabel = showInvR ? '1/R' : 'R';
+    const rUnit = showInvR ? 'mm⁻¹' : 'mm';
+    info.style.display = 'block';
+    info.innerHTML = `z = ${zi.toFixed(1)} mm<br>w = ${wi.toFixed(4)} mm<br>${rLabel} = ${rStr} ${rUnit}`;
+
+    // Position info box
+    let ix = mx + 14;
+    let iy = e.clientY - rect.top - 20;
+    if (ix + 130 > rect.width) ix = mx - 140;
+    if (iy < 4) iy = 4;
+    if (iy + 50 > rect.height) iy = rect.height - 54;
+    info.style.left = ix + 'px';
+    info.style.top = iy + 'px';
+  }
+
+  canvas.addEventListener('mousemove', onMove);
+  canvas.addEventListener('mouseleave', () => {
+    vCursor.style.display = 'none';
+    info.style.display = 'none';
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// Results table
+//
+// Builds a summary table showing w(z) and R(z) at key positions:
+// the input plane, each active lens, and the output plane.
+// Uses nearest-neighbour lookup since the sampled z-values may not
+// fall exactly on the requested positions.
+// ══════════════════════════════════════════════════════════════
+function updateResults(data, lenses, totalLen) {
+  const tbody = document.getElementById('resultsBody');
+  const active = lenses.filter(l => l.active).sort((a, b) => a.pos - b.pos);
+  const rows = [];
+
+  function nearest(arr, target) {
+    let idx = 0, minD = Infinity;
+    for (let i = 0; i < arr.length; i++) {
+      const d = Math.abs(arr[i] - target);
+      if (d < minD) { minD = d; idx = i; }
+    }
+    return idx;
+  }
+
+  rows.push({ z: 0, desc: 'Input plane', w: data.wValues[nearest(data.zValues, 0)], R: data.RValues[nearest(data.zValues, 0)] });
+
+  for (const lens of active) {
+    rows.push({ z: lens.pos, desc: `Lens (f=${lens.f} mm)`, w: data.wValues[nearest(data.zValues, lens.pos)], R: data.RValues[nearest(data.zValues, lens.pos)] });
+  }
+
+  rows.push({ z: totalLen, desc: 'Output plane', w: data.wValues[nearest(data.zValues, totalLen)], R: data.RValues[nearest(data.zValues, totalLen)] });
+
+  tbody.innerHTML = rows.map(r => {
+    const rStr = isFinite(r.R) ? (Math.abs(r.R) > 1e8 ? '∞' : r.R.toFixed(1)) : '∞';
+    return `<tr><td>${r.z.toFixed(1)}</td><td>${r.desc}</td><td>${r.w.toFixed(4)}</td><td>${rStr}</td></tr>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════════════════
+// Dynamic lens management
+//
+// The user can add up to 10 lenses.  Each lens gets a row of
+// controls (position, focal length, on/off toggle).  A remove
+// button (×) appears when more than one lens exists.
+//
+// lensData is the in-memory source of truth.  syncLensDataFromDOM()
+// saves the current DOM values back to lensData before structural
+// changes (add/remove).  readLenses() is used during update() to
+// get the current state.  renderLenses() rebuilds the DOM from
+// lensData.
+// ══════════════════════════════════════════════════════════════
+let lensData = [{ pos: 80, f: 60, active: true }];
+
+function syncLensDataFromDOM() {
+  const rows = document.querySelectorAll('#lensContainer .lens-row');
+  if (rows.length) {
+    lensData = Array.from(rows).map(row => ({
+      pos: parseFloat(row.querySelector('.lens-pos').value),
+      f: parseFloat(row.querySelector('.lens-f').value),
+      active: row.querySelector('.lens-active').checked
+    }));
+  }
+}
+
+function readLenses() {
+  const rows = document.querySelectorAll('#lensContainer .lens-row');
+  return Array.from(rows).map(row => ({
+    pos: parseFloat(row.querySelector('.lens-pos').value),
+    f: parseFloat(row.querySelector('.lens-f').value),
+    active: row.querySelector('.lens-active').checked
+  }));
+}
+
+function renderLenses() {
+  const container = document.getElementById('lensContainer');
+  container.innerHTML = '';
+  lensData.forEach((lens, i) => {
+    const row = document.createElement('div');
+    row.className = 'lens-row';
+    const canRemove = lensData.length > 1;
+    row.innerHTML = '<span class="lens-label">Lens ' + (i + 1) + '</span>'
+      + '<div class="field"><label>Pos (mm)</label><input type="number" class="lens-pos" value="' + lens.pos + '" step="5"></div>'
+      + '<div class="field"><label>f (mm)</label><input type="number" class="lens-f" value="' + lens.f + '" step="5"></div>'
+      + '<div class="field"><label><input type="checkbox" class="lens-active"' + (lens.active ? ' checked' : '') + '> On</label></div>'
+      + (canRemove ? '<button class="lens-remove" data-idx="' + i + '">×</button>' : '');
+    container.appendChild(row);
+  });
+  container.querySelectorAll('.lens-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      lensData.splice(parseInt(btn.dataset.idx), 1);
+      renderLenses();
+      update();
+    });
+  });
+}
+
+// ══════════════════════════════════════════════════════════════
+// Main update pipeline
+//
+// Called on every user interaction (Recalculate button, checkbox
+// toggle, Enter key, add/remove lens, window resize).  The
+// pipeline is:
+//   1. Read all inputs
+//   2. Run the ABCD propagation
+//   3. Render the plots
+//   4. Set up mouse tracking (rebinds the canvas events)
+//   5. Populate the results table
+// ══════════════════════════════════════════════════════════════
+function update() {
+  const wavelength = parseFloat(document.getElementById('wavelength').value) * 1e-6;
+  const w0 = parseFloat(document.getElementById('w0').value);
+  const R0 = parseFloat(document.getElementById('R0').value);
+  const totalLen = parseFloat(document.getElementById('totalLength').value);
+  const nSamples = parseInt(document.getElementById('samples').value);
+  const showR = document.getElementById('showR').checked;
+  const showGrid = document.getElementById('showGrid').checked;
+  const showInvR = document.getElementById('showInvR').checked;
+
+  const lenses = readLenses();
+
+  if (!w0 || w0 <= 0 || !totalLen || totalLen <= 0 || !nSamples || nSamples < 10) return;
+
+  const data = propagate(wavelength, w0, R0, lenses, totalLen, nSamples);
+  const canvas = document.getElementById('plotCanvas');
+  drawPlot(canvas, data, lenses, { showR, showGrid, showInvR });
+  setupMouseTracking(canvas, data, lenses, { showR, showInvR });
+  updateResults(data, lenses, totalLen);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Event wiring & initialisation
+// ══════════════════════════════════════════════════════════════
+
+// Buttons and checkboxes trigger a full recalculation.
+document.getElementById('recalcBtn').addEventListener('click', update);
+document.getElementById('showR').addEventListener('change', update);
+document.getElementById('showGrid').addEventListener('change', update);
+document.getElementById('showInvR').addEventListener('change', update);
+
+// Add-lens button: snapshot the current lens values, push a new lens
+// (default position = last lens + 80 mm, f = 60 mm, active), re-render
+// the controls, and recalculate.
+document.getElementById('addLensBtn').addEventListener('click', () => {
+  if (lensData.length >= 10) return;
+  syncLensDataFromDOM();
+  const lastPos = lensData.length > 0 ? lensData[lensData.length - 1].pos : 0;
+  lensData.push({ pos: lastPos + 80, f: 60, active: true });
+  renderLenses();
+  update();
+});
+
+// Enter key triggers recalculation.
+// Static inputs (beam parameters) are wired directly.
+document.querySelectorAll('input').forEach(inp => {
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') update(); });
+});
+// Dynamic lens inputs use event delegation because they are recreated
+// every time the lens list changes.
+document.getElementById('lensContainer').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.matches('.lens-pos, .lens-f')) update();
+});
+
+// Bootstrap: render the initial single-lens controls, then run the
+// first propagation + plot once the DOM is fully loaded.
+renderLenses();
+window.addEventListener('load', update);
+window.addEventListener('resize', update);
+</script>
+</body>
+</html>
