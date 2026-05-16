@@ -67,14 +67,14 @@ canvas { width: 100%; height: 520px; display: block; cursor: crosshair; }
   <div class="controls">
     <div class="control-group">
       <h3>Beam Parameters</h3>
-      <div class="field"><label>Wavelength λ (nm)</label><input type="number" id="wavelength" value="633" min="1" step="1"></div>
-      <div class="field"><label>Initial w₀ (mm)</label><input type="number" id="w0" value="0.5" min="0.001" step="0.01"></div>
-      <div class="field"><label>Initial w₀y (mm)</label><input type="number" id="w0y" value="0.5" min="0.001" step="0.01"></div>
+      <div class="field"><label>Wavelength λ (nm)</label><input type="number" id="wavelength" value="633" min="1" step="1" title="Free-space wavelength in nanometres"></div>
+      <div class="field"><label>Initial w₀ (mm)</label><input type="number" id="w0" value="0.5" min="0.001" step="0.01" title="Beam half-width at z = 0 (x-axis)"></div>
+      <div class="field"><label>Initial w₀y (mm)</label><input type="number" id="w0y" value="0.5" min="0.001" step="0.01" title="Beam half-width at z = 0 (y-axis); set ≠ w₀ for elliptical beams"></div>
       <div class="field"><label>M²</label><input type="number" id="M2" value="1" min="1" step="0.1" title="Beam propagation factor (1 = ideal Gaussian)"></div>
       <div class="field"><label>Initial R₀ (mm)</label><input type="number" id="R0" value="0" step="10" title="0 = infinite (plane wavefront)"></div>
       <div class="field"><label>Initial R₀y (mm)</label><input type="number" id="R0y" value="0" step="10" title="0 = infinite (plane wavefront)"></div>
-      <div class="field"><label>Total length (mm)</label><input type="number" id="totalLength" value="300" min="1" step="10"></div>
-      <div class="field"><label>Samples</label><input type="number" id="samples" value="4096" min="50" max="50000" step="50"></div>
+      <div class="field"><label>Total length (mm)</label><input type="number" id="totalLength" value="300" min="1" step="10" title="Propagation distance to simulate"></div>
+      <div class="field"><label>Samples</label><input type="number" id="samples" value="4096" min="50" max="50000" step="1" title="Number of z-sample points; higher = smoother curves. Each active lens adds a before/after duplicate, so total plotted points ≈ Samples + 2×lenses."></div>
     </div>
     <div class="control-group">
       <h3>Lenses <button class="btn-add-lens" id="addLensBtn">+ Add Lens</button></h3>
@@ -84,11 +84,10 @@ canvas { width: 100%; height: 520px; display: block; cursor: crosshair; }
 
   <div class="actions">
     <button class="btn" id="recalcBtn">Recalculate</button>
-    <label class="toggle-label"><input type="checkbox" id="showR" checked> Show R(z)</label>
     <label class="toggle-label"><input type="checkbox" id="showGrid" checked> Grid</label>
-    <label class="toggle-label"><input type="checkbox" id="showInvR"> Show 1/R(z)</label>
+    <label class="toggle-label"><input type="checkbox" id="showInvR" checked> Show 1/R(z)</label>
     <label class="toggle-label"><input type="checkbox" id="showPhase"> Show φ(z)</label>
-    <label class="toggle-label"><input type="checkbox" id="showPoints" checked> Points</label>
+    <label class="toggle-label"><input type="checkbox" id="showPoints"> Points</label>
     <label class="toggle-label"><input type="checkbox" id="showWaistTrack"> Compare: waist-tracking (dashed)</label>
     <button class="btn" id="resetZoomBtn" style="display:none">Reset Zoom</button>
   </div>
@@ -438,7 +437,7 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
   ctx.rect(M.left, M.top, pW, pH1);
   ctx.clip();
 
-  if (opts.grid) drawGrid(ctx, M.left, M.top, pW, pH1, zSpan, maxW, 5, 5);
+  if (opts.showGrid) drawGrid(ctx, M.left, M.top, pW, pH1, zSpan, maxW, 5, 5);
 
   // Filled envelope from 0 to wₓ(z).
   ctx.beginPath();
@@ -645,7 +644,7 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
     ctx.rect(M.left, M.top + pH1 + M.gap, pW, pH2);
     ctx.clip();
 
-    if (opts.grid) drawGrid(ctx, M.left, M.top + pH1 + M.gap, pW, pH2, zSpan, pSpan, 5, 5, pCenter);
+    if (opts.showGrid) drawGrid(ctx, M.left, M.top + pH1 + M.gap, pW, pH2, zSpan, pSpan, 5, 5, pCenter);
 
     ctx.beginPath();
     let started = false;
@@ -755,7 +754,7 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
     ctx.rect(M.left, M.top + pH1 + M.gap, pW, pH2);
     ctx.clip();
 
-    if (opts.grid) drawGrid(ctx, M.left, M.top + pH1 + M.gap, pW, pH2, zSpan, 2 * yLimit, 5, 5, 0);
+    if (opts.showGrid) drawGrid(ctx, M.left, M.top + pH1 + M.gap, pW, pH2, zSpan, 2 * yLimit, 5, 5, 0);
 
     // Draw the curve over the visible z-range only.
     ctx.beginPath();
@@ -1013,7 +1012,7 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
 // yCenter defines the mid-point of the y-range (default 0).
 function drawGrid(ctx, ox, oy, w, h, xMax, yRange, nx, ny, yCenter) {
   ctx.save();
-  ctx.strokeStyle = 'rgba(0,0,0,0.06)';
+  ctx.strokeStyle = '#d0d5dd';
   ctx.lineWidth = 1;
   yCenter = yCenter || 0;
   for (let i = 0; i <= nx; i++) {
@@ -1315,9 +1314,9 @@ function renderLenses() {
     row.className = 'lens-row';
     const canRemove = lensData.length > 1;
     row.innerHTML = '<span class="lens-label">Lens ' + (i + 1) + '</span>'
-      + '<div class="field"><label>Pos (mm)</label><input type="number" class="lens-pos" value="' + lens.pos + '" step="5"></div>'
-      + '<div class="field"><label>fₓ (mm)</label><input type="number" class="lens-fx" value="' + lens.fx + '" step="5"></div>'
-      + '<div class="field"><label>fᵧ (mm)</label><input type="number" class="lens-fy" value="' + lens.fy + '" step="5"></div>'
+      + '<div class="field"><label>Pos (mm)</label><input type="number" class="lens-pos" value="' + lens.pos + '" step="5" title="Distance from z = 0 to the lens"></div>'
+      + '<div class="field"><label>fₓ (mm)</label><input type="number" class="lens-fx" value="' + lens.fx + '" step="5" title="0 = ∞"></div>'
+      + '<div class="field"><label>fᵧ (mm)</label><input type="number" class="lens-fy" value="' + lens.fy + '" step="5" title="0 = ∞"></div>'
       + '<div class="field"><label><input type="checkbox" class="lens-active"' + (lens.active ? ' checked' : '') + '> On</label></div>'
       + (canRemove ? '<button class="lens-remove" data-idx="' + i + '">×</button>' : '');
     container.appendChild(row);
@@ -1352,7 +1351,7 @@ function update() {
   const R0y = parseFloat(document.getElementById('R0y').value);
   const totalLen = parseFloat(document.getElementById('totalLength').value);
   const nSamples = parseInt(document.getElementById('samples').value);
-  const showR = document.getElementById('showR').checked;
+  const showR = true;
   const showGrid = document.getElementById('showGrid').checked;
   const showInvR = document.getElementById('showInvR').checked;
   const showPhase = document.getElementById('showPhase').checked;
@@ -1387,7 +1386,6 @@ function update() {
 
 // Buttons and checkboxes trigger a full recalculation.
 document.getElementById('recalcBtn').addEventListener('click', update);
-document.getElementById('showR').addEventListener('change', update);
 document.getElementById('showGrid').addEventListener('change', update);
 document.getElementById('showInvR').addEventListener('change', update);
 document.getElementById('showPhase').addEventListener('change', update);
