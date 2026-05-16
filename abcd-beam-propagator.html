@@ -780,6 +780,14 @@ function setupMouseTracking(canvas, data, lenses, opts) {
   }
 
   canvas.addEventListener('mousedown', (e) => {
+    if (e.shiftKey) {
+      const curMin = opts.zoomRange ? opts.zoomRange.zMin : 0;
+      const curMax = opts.zoomRange ? opts.zoomRange.zMax : data.zMax;
+      const expand = (curMax - curMin) * 0.2;
+      zoomRange = { zMin: Math.max(0, curMin - expand), zMax: Math.min(data.zMax, curMax + expand) };
+      update();
+      return;
+    }
     const p = posFrom(e.clientX);
     dragStart = { clientX: e.clientX, mx: p.mx, z: p.z };
   });
@@ -824,7 +832,7 @@ function setupMouseTracking(canvas, data, lenses, opts) {
     info.style.display = 'block';
     if (opts.showPhase) {
       const phi = data.phaseValues[idx];
-      info.innerHTML = `z = ${zi.toFixed(1)} mm<br>w = ${wi.toFixed(4)} mm<br>φ = ${isFinite(phi) ? phi.toFixed(6) : '0'} rad`;
+      info.innerHTML = `z = ${zi.toFixed(3)} mm<br>w = ${wi.toFixed(4)} mm<br>φ = ${isFinite(phi) ? phi.toFixed(6) : '0'} rad`;
     } else {
       const showInvR = opts.showInvR;
       const rStr = showInvR
@@ -832,7 +840,7 @@ function setupMouseTracking(canvas, data, lenses, opts) {
         : (isFinite(Ri) ? (Math.abs(Ri) > 1e6 ? '∞' : Ri.toFixed(1)) : '∞');
       const rLabel = showInvR ? '1/R' : 'R';
       const rUnit = showInvR ? 'mm⁻¹' : 'mm';
-      info.innerHTML = `z = ${zi.toFixed(1)} mm<br>w = ${wi.toFixed(4)} mm<br>${rLabel} = ${rStr} ${rUnit}`;
+      info.innerHTML = `z = ${zi.toFixed(3)} mm<br>w = ${wi.toFixed(4)} mm<br>${rLabel} = ${rStr} ${rUnit}`;
     }
 
     let ix = p.mx + 14;
@@ -856,6 +864,11 @@ function setupMouseTracking(canvas, data, lenses, opts) {
     }
     dragStart = null;
     zoomRect.style.display = 'none';
+  });
+
+  canvas.addEventListener('dblclick', () => {
+    zoomRange = null;
+    update();
   });
 
   canvas.addEventListener('mouseleave', () => {
