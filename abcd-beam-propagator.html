@@ -84,6 +84,7 @@ canvas { width: 100%; height: 520px; display: block; cursor: crosshair; }
     <label class="toggle-label"><input type="checkbox" id="showR" checked> Show R(z)</label>
     <label class="toggle-label"><input type="checkbox" id="showGrid" checked> Grid</label>
     <label class="toggle-label"><input type="checkbox" id="showInvR"> Show 1/R(z)</label>
+    <label class="toggle-label"><input type="checkbox" id="showPoints" checked> Points</label>
     <button class="btn" id="resetZoomBtn" style="display:none">Reset Zoom</button>
   </div>
 
@@ -178,38 +179,84 @@ function qToWR(q, lambda) {
 // ══════════════════════════════════════════════════════════════
 // Propagation engine
 //
-// For each sample point z, we build the cumulative ABCD matrix
-// from z = 0 → z by walking through the active lenses in order.
-// The matrix product is:
-//   M_total = M_free(last→z) * M_lens * M_free(prev→lens) * ...
+// Walks along the optical axis segment by segment.  At each lens
+// position we record the beam parameters *before* and *after* the
+// lens so the plot captures the discontinuity in R(z).  Within
+// free-space segments the q-parameter is evaluated by building the
+// ABCD matrix from the start of the segment, which avoids
+// accumulating floating-point error across many steps.
 // ══════════════════════════════════════════════════════════════
 function propagate(lambda, w0, R0, lenses, totalLen, nSamples) {
   const active = lenses.filter(l => l.active).sort((a, b) => a.pos - b.pos);
-  const zValues = new Float64Array(nSamples);
-  const wValues = new Float64Array(nSamples);
-  const RValues = new Float64Array(nSamples);
-
-  const q0 = initQ(lambda, w0, R0);
   const zMax = Math.max(totalLen, ...(active.length ? active.map(l => l.pos) : [0]));
 
-  for (let i = 0; i < nSamples; i++) {
-    const z = (i / (nSamples - 1)) * zMax;
-    zValues[i] = z;
+  const zValues = [];
+  const wValues = [];
+  const RValues = [];
 
-    let M = matId();
-    let prev = 0;
-    for (const lens of active) {
-      if (lens.pos > z) break;
-      if (lens.pos > prev) { M = matMul(matFree(lens.pos - prev), M); prev = lens.pos; }
-      M = matMul(matLens(lens.f), M);
+  // No lenses — simple uniform free-space propagation.
+  if (active.length === 0) {
+    let q = initQ(lambda, w0, R0);
+    for (let i = 0; i < nSamples; i++) {
+      const z = (i / (nSamples - 1)) * zMax;
+      const res = qToWR(applyABCD(matFree(z), q), lambda);
+      zValues.push(z); wValues.push(res.w); RValues.push(res.R);
     }
-    if (z > prev) { M = matMul(matFree(z - prev), M); }
-
-    const q = applyABCD(M, q0);
-    const { w, R } = qToWR(q, lambda);
-    wValues[i] = w;
-    RValues[i] = R;
+    return { zValues, wValues, RValues, zMax };
   }
+
+  let q = initQ(lambda, w0, R0);
+  let prevZ = 0;
+
+  // Interior sample points are distributed proportionally among the
+  // free-space segments (there are active.length + 1 of them).
+  const nSegs = active.length + 1;
+  const ptsPerSeg = Math.max(3, Math.floor(nSamples / nSegs));
+
+  // Record the initial plane.
+  { const r = qToWR(q, lambda); zValues.push(0); wValues.push(r.w); RValues.push(r.R); }
+
+  for (const lens of active) {
+    const dz = lens.pos - prevZ;
+
+    // Free-space samples between prevZ and the lens (exclusive of both
+    // endpoints, which are recorded separately as the previous after-lens
+    // and the upcoming before-lens point).
+    if (dz > 0) {
+      for (let j = 1; j < ptsPerSeg; j++) {
+        const z = prevZ + (j / ptsPerSeg) * dz;
+        const r = qToWR(applyABCD(matFree(z - prevZ), q), lambda);
+        zValues.push(z); wValues.push(r.w); RValues.push(r.R);
+      }
+      q = applyABCD(matFree(dz), q);
+    }
+
+    // Beam parameters just before the lens.
+    const b = qToWR(q, lambda);
+    zValues.push(lens.pos); wValues.push(b.w); RValues.push(b.R);
+
+    // Apply the thin-lens ABCD matrix.
+    q = applyABCD(matLens(lens.f), q);
+
+    // Beam parameters just after the lens.
+    const a = qToWR(q, lambda);
+    zValues.push(lens.pos); wValues.push(a.w); RValues.push(a.R);
+
+    prevZ = lens.pos;
+  }
+
+  // Final free-space segment from the last lens out to zMax.
+  if (zMax > prevZ) {
+    const remaining = zMax - prevZ;
+    for (let j = 1; j < ptsPerSeg; j++) {
+      const z = prevZ + (j / ptsPerSeg) * remaining;
+      const r = qToWR(applyABCD(matFree(z - prevZ), q), lambda);
+      zValues.push(z); wValues.push(r.w); RValues.push(r.R);
+    }
+    const f = qToWR(applyABCD(matFree(remaining), q), lambda);
+    zValues.push(zMax); wValues.push(f.w); RValues.push(f.R);
+  }
+
   return { zValues, wValues, RValues, zMax };
 }
 
@@ -309,6 +356,17 @@ function drawPlot(canvas, data, lenses, opts) {
   ctx.lineWidth = 2;
   ctx.stroke();
 
+  // Optional point markers on the beam-boundary curve.
+  if (opts.showPoints) {
+    ctx.fillStyle = '#2563eb';
+    for (let i = i0; i <= i1; i++) {
+      const y = toY1(Math.max(wValues[i], 0));
+      ctx.beginPath();
+      ctx.arc(toX(zValues[i]), y, 2.5, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  }
+
   // Lens markers on the w(z) panel: a dashed vertical line at the lens
   // position, topped with a double-headed arrow as the conventional
   // thin-lens symbol.  Only drawn when the lens is inside the visible range.
@@ -386,10 +444,10 @@ function drawPlot(canvas, data, lenses, opts) {
       plotY[i] = useInvR ? (isFinite(R) && Math.abs(R) > 1e-15 ? 1 / R : 0) : R;
     }
 
-    // Auto-scale the bottom panel, with a fallback minimum span so
-    // the axis doesn't collapse for near-zero ranges.
+    // Auto-scale the bottom panel to the visible z-range only,
+    // with a fallback minimum span so the axis doesn't collapse.
     const finiteVals = [];
-    for (let i = 0; i < plotY.length; i++) {
+    for (let i = i0; i <= i1; i++) {
       if (isFinite(plotY[i])) finiteVals.push(Math.abs(plotY[i]));
     }
     const maxV = finiteVals.length ? Math.max(...finiteVals) * 1.2 : (useInvR ? 0.01 : 1);
@@ -422,6 +480,19 @@ function drawPlot(canvas, data, lenses, opts) {
     ctx.strokeStyle = lineColor;
     ctx.lineWidth = 1.8;
     ctx.stroke();
+
+    // Optional point markers at every visible data sample.
+    if (opts.showPoints) {
+      ctx.fillStyle = lineColor;
+      for (let i = i0; i <= i1; i++) {
+        const v = plotY[i];
+        if (!isFinite(v)) continue;
+        const clamped = Math.max(-yLimit, Math.min(yLimit, v));
+        ctx.beginPath();
+        ctx.arc(toX(zValues[i]), toY(clamped), 3, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    }
 
     // Dashed horizontal line at y = 0 as a visual reference.
     const y0 = toY(0);
@@ -657,32 +728,43 @@ function setupMouseTracking(canvas, data, lenses, opts) {
 // ══════════════════════════════════════════════════════════════
 // Results table
 //
-// Builds a summary table showing w(z) and R(z) at key positions:
-// the input plane, each active lens, and the output plane.
-// Uses nearest-neighbour lookup since the sampled z-values may not
-// fall exactly on the requested positions.
+// Shows w(z) and R(z) at z = 0, at every lens (both before and
+// after), and at z = zMax.  Because the propagation now records
+// two values at each lens position, we find the first occurrence
+// (before the lens) and the last occurrence (after the lens) for
+// each active lens.
 // ══════════════════════════════════════════════════════════════
 function updateResults(data, lenses, totalLen) {
   const tbody = document.getElementById('resultsBody');
   const active = lenses.filter(l => l.active).sort((a, b) => a.pos - b.pos);
+  const { zValues, wValues, RValues } = data;
   const rows = [];
 
-  function nearest(arr, target) {
-    let idx = 0, minD = Infinity;
-    for (let i = 0; i < arr.length; i++) {
-      const d = Math.abs(arr[i] - target);
-      if (d < minD) { minD = d; idx = i; }
-    }
-    return idx;
-  }
+  // Input plane (z = 0 is always the very first sample).
+  rows.push({ z: 0, desc: 'Input plane', w: wValues[0], R: RValues[0] });
 
-  rows.push({ z: 0, desc: 'Input plane', w: data.wValues[nearest(data.zValues, 0)], R: data.RValues[nearest(data.zValues, 0)] });
-
+  // For each lens, locate the first and last occurrence of its
+  // position in zValues.  The first is the value *before* the lens,
+  // the last is the value *after* the lens.
   for (const lens of active) {
-    rows.push({ z: lens.pos, desc: `Lens (f=${lens.f} mm)`, w: data.wValues[nearest(data.zValues, lens.pos)], R: data.RValues[nearest(data.zValues, lens.pos)] });
+    let iFirst = -1, iLast = -1;
+    for (let i = 0; i < zValues.length; i++) {
+      if (Math.abs(zValues[i] - lens.pos) < 1e-9) {
+        if (iFirst === -1) iFirst = i;
+        iLast = i;
+      }
+    }
+    if (iFirst !== -1) {
+      rows.push({ z: lens.pos, desc: `Before lens (f = ${lens.f} mm)`, w: wValues[iFirst], R: RValues[iFirst] });
+      if (iLast > iFirst) {
+        rows.push({ z: lens.pos, desc: `After lens (f = ${lens.f} mm)`, w: wValues[iLast], R: RValues[iLast] });
+      }
+    }
   }
 
-  rows.push({ z: totalLen, desc: 'Output plane', w: data.wValues[nearest(data.zValues, totalLen)], R: data.RValues[nearest(data.zValues, totalLen)] });
+  // Output plane (last sampled point).
+  const last = zValues.length - 1;
+  rows.push({ z: zValues[last], desc: 'Output plane', w: wValues[last], R: RValues[last] });
 
   tbody.innerHTML = rows.map(r => {
     const rStr = isFinite(r.R) ? (Math.abs(r.R) > 1e8 ? '∞' : r.R.toFixed(1)) : '∞';
@@ -770,6 +852,7 @@ function update() {
   const showR = document.getElementById('showR').checked;
   const showGrid = document.getElementById('showGrid').checked;
   const showInvR = document.getElementById('showInvR').checked;
+  const showPoints = document.getElementById('showPoints').checked;
 
   const lenses = readLenses();
 
@@ -777,7 +860,7 @@ function update() {
 
   const data = propagate(wavelength, w0, R0, lenses, totalLen, nSamples);
   const canvas = document.getElementById('plotCanvas');
-  drawPlot(canvas, data, lenses, { showR, showGrid, showInvR, zoomRange });
+  drawPlot(canvas, data, lenses, { showR, showGrid, showInvR, showPoints, zoomRange });
   setupMouseTracking(canvas, data, lenses, { showR, showInvR, zoomRange });
   updateResults(data, lenses, totalLen);
 
@@ -794,6 +877,7 @@ document.getElementById('recalcBtn').addEventListener('click', update);
 document.getElementById('showR').addEventListener('change', update);
 document.getElementById('showGrid').addEventListener('change', update);
 document.getElementById('showInvR').addEventListener('change', update);
+document.getElementById('showPoints').addEventListener('change', update);
 
 // Reset-zoom: return to the full propagation range.
 document.getElementById('resetZoomBtn').addEventListener('click', () => {
