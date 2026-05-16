@@ -88,6 +88,7 @@ canvas { width: 100%; height: 520px; display: block; cursor: crosshair; }
     <label class="toggle-label"><input type="checkbox" id="showInvR" checked> Show 1/R(z)</label>
     <label class="toggle-label"><input type="checkbox" id="showPhase"> Show φ(z)</label>
     <label class="toggle-label"><input type="checkbox" id="showPoints"> Points</label>
+    <label class="toggle-label"><input type="checkbox" id="showFwhm"> FWHM</label>
     <label class="toggle-label"><input type="checkbox" id="showWaistTrack"> Compare: waist-tracking (dashed)</label>
     <button class="btn" id="resetZoomBtn" style="display:none">Reset Zoom</button>
   </div>
@@ -393,6 +394,7 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
 
   // Apply zoom: only the visible z-range is plotted.  Y-axes auto-scale
   // to the visible data so zooming in re-ranges the vertical scale.
+  const wScale = opts.showFwhm ? Math.sqrt(2 * Math.log(2)) : 1;
   const zMin = opts.zoomRange ? opts.zoomRange.zMin : 0;
   const zMaxDisp = opts.zoomRange ? opts.zoomRange.zMax : zMax;
   const zSpan = Math.max(zMaxDisp - zMin, 1e-6);
@@ -410,8 +412,8 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
   const finiteW = [];
   const finiteR = [];
   for (let i = i0; i <= i1; i++) {
-    if (isFinite(wValuesX[i]) && wValuesX[i] > 0) finiteW.push(wValuesX[i]);
-    if (isAsymmetric && isFinite(wValuesY[i]) && wValuesY[i] > 0) finiteW.push(wValuesY[i]);
+    if (isFinite(wValuesX[i]) && wValuesX[i] > 0) finiteW.push(wValuesX[i] * wScale);
+    if (isAsymmetric && isFinite(wValuesY[i]) && wValuesY[i] > 0) finiteW.push(wValuesY[i] * wScale);
     if (isFinite(RValues[i])) finiteR.push(Math.abs(RValues[i]));
   }
   const maxW = finiteW.length ? Math.max(...finiteW) * 1.15 : 1;
@@ -443,7 +445,7 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
   ctx.beginPath();
   ctx.moveTo(toX(zValues[i0]), toY1(0));
   for (let i = i0; i <= i1; i++) {
-    const y = toY1(Math.max(wValuesX[i], 0));
+    const y = toY1(Math.max(wValuesX[i] * wScale, 0));
     ctx.lineTo(toX(zValues[i]), y);
   }
   for (let i = i1; i >= i0; i--) {
@@ -459,7 +461,7 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
   let wFirst = true;
   for (let i = i0; i <= i1; i++) {
     const x = toX(zValues[i]);
-    const y = toY1(Math.max(wValuesX[i], 0));
+    const y = toY1(Math.max(wValuesX[i] * wScale, 0));
     if (wFirst) { ctx.moveTo(x, y); wFirst = false; } else { ctx.lineTo(x, y); }
   }
   ctx.strokeStyle = '#2563eb';
@@ -470,7 +472,7 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
   if (opts.showPoints) {
     ctx.fillStyle = '#2563eb';
     for (let i = i0; i <= i1; i++) {
-      const y = toY1(Math.max(wValuesX[i], 0));
+      const y = toY1(Math.max(wValuesX[i] * wScale, 0));
       ctx.beginPath();
       ctx.arc(toX(zValues[i]), y, 2.5, 0, 2 * Math.PI);
       ctx.fill();
@@ -488,7 +490,7 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
     for (let i = i0; i <= i1; i++) {
       if (wWT[i] === undefined) continue;
       const x = toX(zValues[i]);
-      const y = toY1(Math.max(wWT[i], 0));
+      const y = toY1(Math.max(wWT[i] * wScale, 0));
       if (firstWT) { ctx.moveTo(x, y); firstWT = false; } else { ctx.lineTo(x, y); }
     }
     ctx.stroke();
@@ -501,7 +503,7 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
     let wFirstY = true;
     for (let i = i0; i <= i1; i++) {
       const x = toX(zValues[i]);
-      const y = toY1(Math.max(wValuesY[i], 0));
+      const y = toY1(Math.max(wValuesY[i] * wScale, 0));
       if (wFirstY) { ctx.moveTo(x, y); wFirstY = false; } else { ctx.lineTo(x, y); }
     }
     ctx.strokeStyle = '#d946ef';
@@ -511,7 +513,7 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
     if (opts.showPoints) {
       ctx.fillStyle = '#d946ef';
       for (let i = i0; i <= i1; i++) {
-        const y = toY1(Math.max(wValuesY[i], 0));
+        const y = toY1(Math.max(wValuesY[i] * wScale, 0));
         ctx.beginPath();
         ctx.arc(toX(zValues[i]), y, 2.5, 0, 2 * Math.PI);
         ctx.fill();
@@ -528,7 +530,7 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
       for (let i = i0; i <= i1; i++) {
         if (wWT[i] === undefined) continue;
         const x = toX(zValues[i]);
-        const y = toY1(Math.max(wWT[i], 0));
+        const y = toY1(Math.max(wWT[i] * wScale, 0));
         if (firstWTy) { ctx.moveTo(x, y); firstWTy = false; } else { ctx.lineTo(x, y); }
       }
       ctx.stroke();
@@ -588,8 +590,8 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
       ctx.moveTo(x + 5, y - 5); ctx.lineTo(x - 5, y + 5);
       ctx.stroke();
     };
-    for (const wx of xWaists) drawWaistX(wx.z, wx.w, '#2563eb');
-    for (const wy of yWaists) drawWaistX(wy.z, wy.w, '#d946ef');
+    for (const wx of xWaists) drawWaistX(wx.z, wx.w * wScale, '#2563eb');
+    for (const wy of yWaists) drawWaistX(wy.z, wy.w * wScale, '#d946ef');
   }
 
   ctx.restore();
@@ -598,13 +600,13 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
   ctx.fillStyle = '#6b7280';
   ctx.font = '12px sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('Beam width w(z) [mm]', M.left + pW / 2, M.top - 6);
+  ctx.fillText(opts.showFwhm ? 'Beam width FWHM [mm]' : 'Beam width w(z) [mm]', M.left + pW / 2, M.top - 6);
   // Y-axis label
   ctx.save();
   ctx.translate(14, M.top + pH1 / 2);
   ctx.rotate(-Math.PI / 2);
   ctx.textAlign = 'center';
-  ctx.fillText('w(z) [mm]', 0, 0);
+  ctx.fillText(opts.showFwhm ? 'FWHM [mm]' : 'w(z) [mm]', 0, 0);
   ctx.restore();
   // Y-axis tick labels
   ctx.textAlign = 'right';
@@ -942,7 +944,7 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
   ctx.font = '11px sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText(isAsymmetric ? 'wₓ(z)' : 'w(z)', lx + 26, lyOff + 6);
+  ctx.fillText(opts.showFwhm ? (isAsymmetric ? 'FWHMₓ(z)' : 'FWHM(z)') : (isAsymmetric ? 'wₓ(z)' : 'w(z)'), lx + 26, lyOff + 6);
 
   if (isAsymmetric) {
     lyOff += 20;
@@ -953,7 +955,7 @@ function drawPlot(canvas, dataX, lenses, opts, dataY, dataWT) {
     ctx.lineWidth = 2;
     ctx.stroke();
     ctx.fillStyle = '#1f2937';
-    ctx.fillText('wᵧ(z)', lx + 26, lyOff + 6);
+    ctx.fillText(opts.showFwhm ? 'FWHMᵧ(z)' : 'wᵧ(z)', lx + 26, lyOff + 6);
   }
 
   if (opts.showPhase) {
@@ -1101,7 +1103,8 @@ function setupMouseTracking(canvas, dataX, lenses, opts, dataY, dataWT) {
     }
 
     const zi = dataX.zValues[idx];
-    const wi = dataX.wValues[idx];
+    const wScaleT = opts.showFwhm ? Math.sqrt(2 * Math.log(2)) : 1;
+    const wi = dataX.wValues[idx] * wScaleT;
     const Ri = dataX.RValues[idx];
 
     vCursor.style.display = 'block';
@@ -1111,15 +1114,16 @@ function setupMouseTracking(canvas, dataX, lenses, opts, dataY, dataWT) {
     info.style.display = 'block';
     const rStr = isFinite(Ri) ? (Math.abs(Ri) > 1e8 ? '∞' : Ri.toExponential(4)) : '∞';
     const invRStr = isFinite(Ri) ? (Math.abs(Ri) > 1e-15 ? (1/Ri).toExponential(4) : '0') : '0';
-    const wy = dataY ? dataY.wValues[idx] : null;
-    const wLine = (wy !== null && isFinite(wy)) ? `wₓ = ${wi.toFixed(4)} mm, wᵧ = ${wy.toFixed(4)} mm` : `w = ${wi.toFixed(4)} mm`;
+    const wy = dataY ? dataY.wValues[idx] * wScaleT : null;
+    const wLabel = opts.showFwhm ? 'FWHM' : 'w';
+    const wLine = (wy !== null && isFinite(wy)) ? `${wLabel}ₓ = ${wi.toFixed(4)} mm, ${wLabel}ᵧ = ${wy.toFixed(4)} mm` : `${wLabel} = ${wi.toFixed(4)} mm`;
     let wtLine = '';
     if (dataWT) {
-      const wWT = dataWT.wValues[idx];
+      const wWT = dataWT.wValues[idx] * wScaleT;
       const RWT = dataWT.RValues[idx];
       if (wWT !== undefined && RWT !== undefined) {
         const rWTStr = isFinite(RWT) ? (Math.abs(RWT) > 1e8 ? '∞' : RWT.toExponential(4)) : '∞';
-        wtLine = `<span style="color:#6b7280">WT: w = ${wWT.toFixed(4)} mm, R = ${rWTStr} mm</span><br>`;
+        wtLine = `<span style="color:#6b7280">WT: ${wLabel} = ${wWT.toFixed(4)} mm, R = ${rWTStr} mm</span><br>`;
       }
     }
     if (opts.showPhase) {
@@ -1196,7 +1200,7 @@ function findExactWaists(zValues, wValues, RValues, lambda, M2) {
   return waists;
 }
 
-function updateResults(dataX, lenses, totalLen, dataY, lambda, M2) {
+function updateResults(dataX, lenses, totalLen, dataY, lambda, M2, showFwhm) {
   const tbody = document.getElementById('resultsBody');
   const thead = document.getElementById('resultsHead');
   const active = lenses.filter(l => l.active).sort((a, b) => a.pos - b.pos);
@@ -1205,8 +1209,9 @@ function updateResults(dataX, lenses, totalLen, dataY, lambda, M2) {
   const isAsymmetric = wValuesY && (wValuesX.length === wValuesY.length);
 
   // Update table header dynamically.
-  thead.innerHTML = '<tr><th>z (mm)</th><th>Description</th><th>wₓ(z) (mm)</th>'
-    + (isAsymmetric ? '<th>wᵧ(z) (mm)</th>' : '')
+  const wLabel = showFwhm ? 'FWHM' : 'w';
+  thead.innerHTML = '<tr><th>z (mm)</th><th>Description</th><th>' + wLabel + 'ₓ(z) (mm)</th>'
+    + (isAsymmetric ? '<th>' + wLabel + 'ᵧ(z) (mm)</th>' : '')
     + '<th>R(z) (mm)</th><th>φ(z) (rad)</th></tr>';
 
   const rows = [];
@@ -1216,6 +1221,7 @@ function updateResults(dataX, lenses, totalLen, dataY, lambda, M2) {
   const xWaists = findExactWaists(zValues, wValuesX, RValues, lambda, M2);
   const yRValues = dataY ? dataY.RValues : null;
   const yWaists = isAsymmetric ? findExactWaists(zValues, wValuesY, yRValues, lambda, M2) : [];
+  const wScaleR = showFwhm ? Math.sqrt(2 * Math.log(2)) : 1;
   const waistZs = [...new Set([...xWaists.map(w => w.z.toFixed(8)), ...yWaists.map(w => w.z.toFixed(8))])].map(Number).sort((a, b) => a - b);
   for (const z of waistZs) {
     const xw = xWaists.find(w => Math.abs(w.z - z) < 1e-6);
@@ -1260,8 +1266,8 @@ function updateResults(dataX, lenses, totalLen, dataY, lambda, M2) {
   tbody.innerHTML = rows.map(r => {
     const rStr = r.desc === 'Beam waist' ? '∞' : (isFinite(r.R) ? (Math.abs(r.R) > 1e8 ? '∞' : r.R.toFixed(1)) : '∞');
     const phiStr = r.phi !== null ? r.phi.toFixed(6) : '-';
-    const wXStr = r.wx !== null ? r.wx.toFixed(4) : '-';
-    const wYStr = isAsymmetric && r.wy !== null ? r.wy.toFixed(4) : (isAsymmetric ? '-' : '');
+    const wXStr = r.wx !== null ? (r.wx * wScaleR).toFixed(4) : '-';
+    const wYStr = isAsymmetric && r.wy !== null ? (r.wy * wScaleR).toFixed(4) : (isAsymmetric ? '-' : '');
     return `<tr><td>${r.z.toFixed(4)}</td><td>${r.desc}</td><td>${wXStr}</td>`
       + (isAsymmetric ? `<td>${wYStr}</td>` : '')
       + `<td>${rStr}</td><td>${phiStr}</td></tr>`;
@@ -1283,6 +1289,7 @@ function updateResults(dataX, lenses, totalLen, dataY, lambda, M2) {
 // ══════════════════════════════════════════════════════════════
 let lensData = [{ pos: 100, fx: 25, fy: 25, active: true }, { pos: 200, fx: 75, fy: 75, active: true }];
 let zoomRange = null;
+const FWHM_FACTOR = Math.sqrt(2 * Math.log(2));
 
 function syncLensDataFromDOM() {
   const rows = document.querySelectorAll('#lensContainer .lens-row');
@@ -1344,8 +1351,8 @@ function renderLenses() {
 // ══════════════════════════════════════════════════════════════
 function update() {
   const wavelength = parseFloat(document.getElementById('wavelength').value) * 1e-6;
-  const w0 = parseFloat(document.getElementById('w0').value);
-  const w0y = parseFloat(document.getElementById('w0y').value);
+  const rawW0 = parseFloat(document.getElementById('w0').value);
+  const rawW0y = parseFloat(document.getElementById('w0y').value);
   const M2 = parseFloat(document.getElementById('M2').value);
   const R0 = parseFloat(document.getElementById('R0').value);
   const R0y = parseFloat(document.getElementById('R0y').value);
@@ -1356,7 +1363,10 @@ function update() {
   const showInvR = document.getElementById('showInvR').checked;
   const showPhase = document.getElementById('showPhase').checked;
   const showPoints = document.getElementById('showPoints').checked;
+  const showFwhm = document.getElementById('showFwhm').checked;
   const showWaistTrack = document.getElementById('showWaistTrack').checked;
+  const w0 = showFwhm ? rawW0 / FWHM_FACTOR : rawW0;
+  const w0y = showFwhm ? rawW0y / FWHM_FACTOR : rawW0y;
 
   const lenses = readLenses();
 
@@ -1372,9 +1382,9 @@ function update() {
   const yWaists = dataY ? findExactWaists(dataX.zValues, dataY.wValues, dataY.RValues, wavelength, M2) : [];
   const waistMarkers = { x: xWaists, y: yWaists };
   const canvas = document.getElementById('plotCanvas');
-  drawPlot(canvas, dataX, lenses, { showR, showGrid, showInvR, showPhase, showPoints, zoomRange, waistMarkers }, dataY, dataWT);
-  setupMouseTracking(canvas, dataX, lenses, { showR, showInvR, showPhase, zoomRange }, dataY, dataWT);
-  updateResults(dataX, lenses, totalLen, dataY, wavelength, M2);
+  drawPlot(canvas, dataX, lenses, { showR, showGrid, showInvR, showPhase, showPoints, showFwhm, zoomRange, waistMarkers }, dataY, dataWT);
+  setupMouseTracking(canvas, dataX, lenses, { showR, showInvR, showPhase, showFwhm, zoomRange }, dataY, dataWT);
+  updateResults(dataX, lenses, totalLen, dataY, wavelength, M2, showFwhm);
 
   // Show the Reset Zoom button only when a zoom is active.
   document.getElementById('resetZoomBtn').style.display = zoomRange ? '' : 'none';
@@ -1390,6 +1400,13 @@ document.getElementById('showGrid').addEventListener('change', update);
 document.getElementById('showInvR').addEventListener('change', update);
 document.getElementById('showPhase').addEventListener('change', update);
 document.getElementById('showPoints').addEventListener('change', update);
+document.getElementById('showFwhm').addEventListener('change', () => {
+  const isFwhm = document.getElementById('showFwhm').checked;
+  const w0Input = document.getElementById('w0');
+  const w0yInput = document.getElementById('w0y');
+  w0Input.value = isFwhm ? (parseFloat(w0Input.value) * FWHM_FACTOR).toFixed(4) : (parseFloat(w0Input.value) / FWHM_FACTOR).toFixed(4);
+  w0yInput.value = isFwhm ? (parseFloat(w0yInput.value) * FWHM_FACTOR).toFixed(4) : (parseFloat(w0yInput.value) / FWHM_FACTOR).toFixed(4);
+});
 
 // Reset-zoom: return to the full propagation range.
 document.getElementById('resetZoomBtn').addEventListener('click', () => {
