@@ -830,17 +830,13 @@ function setupMouseTracking(canvas, data, lenses, opts) {
     vCursor.style.height = p.rect.height + 'px';
 
     info.style.display = 'block';
+    const rStr = isFinite(Ri) ? (Math.abs(Ri) > 1e8 ? '∞' : Ri.toFixed(1)) : '∞';
+    const invRStr = isFinite(Ri) ? (Math.abs(Ri) > 1e-15 ? (1/Ri).toExponential(4) : '0') : '0';
     if (opts.showPhase) {
       const phi = data.phaseValues[idx];
-      info.innerHTML = `z = ${zi.toFixed(3)} mm<br>w = ${wi.toFixed(4)} mm<br>φ = ${isFinite(phi) ? phi.toFixed(6) : '0'} rad`;
+      info.innerHTML = `z = ${zi.toFixed(3)} mm<br>w = ${wi.toFixed(4)} mm<br>R = ${rStr} mm, 1/R = ${invRStr} mm⁻¹<br>φ = ${isFinite(phi) ? phi.toFixed(6) : '0'} rad`;
     } else {
-      const showInvR = opts.showInvR;
-      const rStr = showInvR
-        ? (isFinite(Ri) ? (Math.abs(Ri) > 1e-15 ? (1/Ri).toFixed(6) : '0') : '0')
-        : (isFinite(Ri) ? (Math.abs(Ri) > 1e6 ? '∞' : Ri.toFixed(1)) : '∞');
-      const rLabel = showInvR ? '1/R' : 'R';
-      const rUnit = showInvR ? 'mm⁻¹' : 'mm';
-      info.innerHTML = `z = ${zi.toFixed(3)} mm<br>w = ${wi.toFixed(4)} mm<br>${rLabel} = ${rStr} ${rUnit}`;
+      info.innerHTML = `z = ${zi.toFixed(3)} mm<br>w = ${wi.toFixed(4)} mm<br>R = ${rStr} mm, 1/R = ${invRStr} mm⁻¹`;
     }
 
     let ix = p.mx + 14;
