@@ -84,6 +84,7 @@ canvas { width: 100%; height: 520px; display: block; cursor: crosshair; }
     <label class="toggle-label"><input type="checkbox" id="showR" checked> Show R(z)</label>
     <label class="toggle-label"><input type="checkbox" id="showGrid" checked> Grid</label>
     <label class="toggle-label"><input type="checkbox" id="showInvR"> Show 1/R(z)</label>
+    <label class="toggle-label"><input type="checkbox" id="showPhase"> Show φ(z)</label>
     <label class="toggle-label"><input type="checkbox" id="showPoints" checked> Points</label>
     <button class="btn" id="resetZoomBtn" style="display:none">Reset Zoom</button>
   </div>
@@ -97,7 +98,7 @@ canvas { width: 100%; height: 520px; display: block; cursor: crosshair; }
 
   <div class="results" id="resultsPanel">
     <h3>Beam at Key Positions</h3>
-    <table><thead><tr><th>z (mm)</th><th>Description</th><th>w(z) (mm)</th><th>R(z) (mm)</th></tr></thead><tbody id="resultsBody"></tbody></table>
+    <table><thead><tr><th>z (mm)</th><th>Description</th><th>w(z) (mm)</th><th>R(z) (mm)</th><th>φ(z) (rad)</th></tr></thead><tbody id="resultsBody"></tbody></table>
   </div>
 </div>
 
@@ -193,20 +194,26 @@ function propagate(lambda, w0, R0, lenses, totalLen, nSamples) {
   const zValues = [];
   const wValues = [];
   const RValues = [];
+  const phaseValues = [];
+
+  const q0 = initQ(lambda, w0, R0);
 
   // No lenses — simple uniform free-space propagation.
   if (active.length === 0) {
-    let q = initQ(lambda, w0, R0);
     for (let i = 0; i < nSamples; i++) {
       const z = (i / (nSamples - 1)) * zMax;
-      const res = qToWR(applyABCD(matFree(z), q), lambda);
+      const M = matFree(z);
+      const res = qToWR(applyABCD(M, q0), lambda);
       zValues.push(z); wValues.push(res.w); RValues.push(res.R);
+      const val = C.add([M[0][0], 0], C.scale(C.inv(q0), M[0][1]));
+      phaseValues.push(-Math.atan2(val[1], val[0]));
     }
-    return { zValues, wValues, RValues, zMax };
+    return { zValues, wValues, RValues, phaseValues, zMax };
   }
 
-  let q = initQ(lambda, w0, R0);
+  let q = q0;
   let prevZ = 0;
+  let M_cum = matId();
 
   // Interior sample points are distributed proportionally among the
   // free-space segments (there are active.length + 1 of them).
@@ -214,7 +221,7 @@ function propagate(lambda, w0, R0, lenses, totalLen, nSamples) {
   const ptsPerSeg = Math.max(3, Math.floor(nSamples / nSegs));
 
   // Record the initial plane.
-  { const r = qToWR(q, lambda); zValues.push(0); wValues.push(r.w); RValues.push(r.R); }
+  { const r = qToWR(q, lambda); zValues.push(0); wValues.push(r.w); RValues.push(r.R); phaseValues.push(0); }
 
   for (const lens of active) {
     const dz = lens.pos - prevZ;
@@ -225,22 +232,30 @@ function propagate(lambda, w0, R0, lenses, totalLen, nSamples) {
     if (dz > 0) {
       for (let j = 1; j < ptsPerSeg; j++) {
         const z = prevZ + (j / ptsPerSeg) * dz;
-        const r = qToWR(applyABCD(matFree(z - prevZ), q), lambda);
+        const subDz = z - prevZ;
+        const M_at = matMul(matFree(subDz), M_cum);
+        const r = qToWR(applyABCD(matFree(subDz), q), lambda);
         zValues.push(z); wValues.push(r.w); RValues.push(r.R);
+        const val = C.add([M_at[0][0], 0], C.scale(C.inv(q0), M_at[0][1]));
+        phaseValues.push(-Math.atan2(val[1], val[0]));
       }
+      M_cum = matMul(matFree(dz), M_cum);
       q = applyABCD(matFree(dz), q);
     }
 
     // Beam parameters just before the lens.
     const b = qToWR(q, lambda);
     zValues.push(lens.pos); wValues.push(b.w); RValues.push(b.R);
+    { const val = C.add([M_cum[0][0], 0], C.scale(C.inv(q0), M_cum[0][1])); phaseValues.push(-Math.atan2(val[1], val[0])); }
 
     // Apply the thin-lens ABCD matrix.
+    M_cum = matMul(matLens(lens.f), M_cum);
     q = applyABCD(matLens(lens.f), q);
 
     // Beam parameters just after the lens.
     const a = qToWR(q, lambda);
     zValues.push(lens.pos); wValues.push(a.w); RValues.push(a.R);
+    { const val = C.add([M_cum[0][0], 0], C.scale(C.inv(q0), M_cum[0][1])); phaseValues.push(-Math.atan2(val[1], val[0])); }
 
     prevZ = lens.pos;
   }
@@ -250,14 +265,20 @@ function propagate(lambda, w0, R0, lenses, totalLen, nSamples) {
     const remaining = zMax - prevZ;
     for (let j = 1; j < ptsPerSeg; j++) {
       const z = prevZ + (j / ptsPerSeg) * remaining;
-      const r = qToWR(applyABCD(matFree(z - prevZ), q), lambda);
+      const subDz = z - prevZ;
+      const M_at = matMul(matFree(subDz), M_cum);
+      const r = qToWR(applyABCD(matFree(subDz), q), lambda);
       zValues.push(z); wValues.push(r.w); RValues.push(r.R);
+      const val = C.add([M_at[0][0], 0], C.scale(C.inv(q0), M_at[0][1]));
+      phaseValues.push(-Math.atan2(val[1], val[0]));
     }
+    M_cum = matMul(matFree(remaining), M_cum);
     const f = qToWR(applyABCD(matFree(remaining), q), lambda);
     zValues.push(zMax); wValues.push(f.w); RValues.push(f.R);
+    { const val = C.add([M_cum[0][0], 0], C.scale(C.inv(q0), M_cum[0][1])); phaseValues.push(-Math.atan2(val[1], val[0])); }
   }
 
-  return { zValues, wValues, RValues, zMax };
+  return { zValues, wValues, RValues, phaseValues, zMax };
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -280,12 +301,13 @@ function drawPlot(canvas, data, lenses, opts) {
   ctx.scale(dpr, dpr);
   const W = rect.width, H = rect.height;
 
-  const { zValues, wValues, RValues, zMax } = data;
+  const { zValues, wValues, RValues, phaseValues, zMax } = data;
   const active = lenses.filter(l => l.active).sort((a, b) => a.pos - b.pos);
 
   // Two-panel layout with margins for axis labels.
-  // The right margin is wider when the R(z) panel is shown (needs a y-axis label).
-  const M = { top: 36, bottom: 36, left: 62, right: opts.showR ? 62 : 18, gap: 4 };
+  // The right margin is wider when the R(z) or φ(z) panel is shown.
+  const showBottom = opts.showR || opts.showPhase;
+  const M = { top: 36, bottom: 36, left: 62, right: showBottom ? 62 : 18, gap: 4 };
   const pW = W - M.left - M.right;
   const pH1 = (H - M.top - M.bottom - M.gap) * 0.65;
   const pH2 = (H - M.top - M.bottom - M.gap) * 0.35;
@@ -298,8 +320,12 @@ function drawPlot(canvas, data, lenses, opts) {
 
   function idxFirst(arr, lo) { for (let i = 0; i < arr.length; i++) if (arr[i] >= lo) return i; return arr.length - 1; }
   function idxLast(arr, hi) { for (let i = arr.length - 1; i >= 0; i--) if (arr[i] <= hi) return i; return 0; }
-  const i0 = idxFirst(zValues, zMin);
-  const i1 = idxLast(zValues, zMaxDisp);
+  let i0 = idxFirst(zValues, zMin);
+  let i1 = idxLast(zValues, zMaxDisp);
+  if (i1 < i0) { const t = i0; i0 = i1; i1 = t; }  // gap — include both bracketing points
+  // Always include one neighbor on each side so the curve connects to the panel edges.
+  if (i0 > 0) i0--;
+  if (i1 < zValues.length - 1) i1++;
 
   // Auto-scale y-axes from visible data only.
   const finiteW = [];
@@ -314,9 +340,13 @@ function drawPlot(canvas, data, lenses, opts) {
   const rLimit = Math.max(maxRVal * 1.2, 1);
 
   // Map data coordinates to canvas pixels.
-  const toX = (z) => M.left + ((z - zMin) / zSpan) * pW;
+  // Clamp x to just outside the panel bounds so line segments with endpoints
+  // far outside the zoom range don't produce extreme pixel coordinates that
+  // cause canvas rendering engines to clip or fail.
+  const xClampMin = M.left - 1;
+  const xClampMax = M.left + pW + 1;
+  const toX = (z) => Math.max(xClampMin, Math.min(xClampMax, M.left + ((z - zMin) / zSpan) * pW));
   const toY1 = (w) => M.top + pH1 * (1 - w / maxW);
-  const toY2 = (R) => M.top + pH1 + M.gap + pH2 * (0.5 - R / (2 * rLimit));
 
   // Clear
   ctx.clearRect(0, 0, W, H);
@@ -430,10 +460,106 @@ function drawPlot(canvas, data, lenses, opts) {
     ctx.fillText(val.toFixed(2), M.left - 6, y);
   }
 
-  // --- Bottom panel: R(z) or 1/R(z) ---
-  // When showInvR is checked the panel plots 1/R(z) instead of R(z),
-  // which can be more informative near beam waists (where R → ∞, 1/R → 0).
-  if (opts.showR) {
+  // --- Bottom panel: φ(z), R(z), or 1/R(z) ---
+  // When showPhase is checked the panel plots the accumulated Guoy phase
+  // φ(z) = -Arg(A(z) + B(z)/q₀).  When showInvR is checked it plots
+  // 1/R(z) instead of R(z), which can be more informative near beam
+  // waists (where R → ∞, 1/R → 0).
+  if (opts.showPhase) {
+    // Auto-scale the phase panel to the visible z-range.
+    const finitePhase = [];
+    for (let i = i0; i <= i1; i++) {
+      if (isFinite(phaseValues[i])) finitePhase.push(phaseValues[i]);
+    }
+    const minP = finitePhase.length ? Math.min(...finitePhase) : 0;
+    const maxP = finitePhase.length ? Math.max(...finitePhase) : 1;
+    const pRange = Math.max(maxP - minP, 0.01);
+    const pPad = pRange * 0.15;
+    const pLow = minP - pPad;
+    const pHigh = maxP + pPad;
+    const pSpan = pHigh - pLow;
+    const pCenter = (pLow + pHigh) / 2;
+
+    const toY = (v) => M.top + pH1 + M.gap + pH2 * (1 - (v - pLow) / pSpan);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(M.left, M.top + pH1 + M.gap, pW, pH2);
+    ctx.clip();
+
+    if (opts.grid) drawGrid(ctx, M.left, M.top + pH1 + M.gap, pW, pH2, zSpan, pSpan, 5, 5, pCenter);
+
+    ctx.beginPath();
+    let started = false;
+    for (let i = i0; i <= i1; i++) {
+      const v = phaseValues[i];
+      if (!isFinite(v)) { started = false; continue; }
+      const x = toX(zValues[i]);
+      const y = toY(v);
+      if (!started) { ctx.moveTo(x, y); started = true; }
+      else { ctx.lineTo(x, y); }
+    }
+    ctx.strokeStyle = '#0891b2';
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+
+    if (opts.showPoints) {
+      ctx.fillStyle = '#0891b2';
+      for (let i = i0; i <= i1; i++) {
+        const v = phaseValues[i];
+        if (!isFinite(v)) continue;
+        ctx.beginPath();
+        ctx.arc(toX(zValues[i]), toY(v), 3, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    }
+
+    // Zero-phase reference axis line (clipped to panel bounds).
+    const y0 = toY(0);
+    ctx.beginPath();
+    ctx.moveTo(M.left, y0);
+    ctx.lineTo(M.left + pW, y0);
+    ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    for (const lens of active) {
+      if (lens.pos < zMin || lens.pos > zMaxDisp) continue;
+      const x = toX(lens.pos);
+      ctx.beginPath();
+      ctx.moveTo(x, M.top + pH1 + M.gap);
+      ctx.lineTo(x, M.top + pH1 + M.gap + pH2);
+      ctx.strokeStyle = '#059669';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    ctx.restore();
+
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Accumulated Guoy phase φ [rad]', M.left + pW / 2, M.top + pH1 + M.gap - 4);
+    ctx.save();
+    ctx.translate(14, M.top + pH1 + M.gap + pH2 / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center';
+    ctx.fillText('φ [rad]', 0, 0);
+    ctx.restore();
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.font = '10px sans-serif';
+    const nYTicks2 = 5;
+    for (let i = 0; i <= nYTicks2; i++) {
+      const val = pLow + (i / nYTicks2) * pSpan;
+      const y = toY(val);
+      ctx.fillText(val.toFixed(4), M.left - 6, y);
+    }
+  } else if (opts.showR) {
     const useInvR = opts.showInvR;
 
     // Compute the y-axis values from the raw R data.
@@ -561,10 +687,10 @@ function drawPlot(canvas, data, lenses, opts) {
   // Legend
   const lx = M.left + pW - 120, ly = M.top + 8;
   ctx.fillStyle = 'rgba(255,255,255,0.9)';
-  ctx.fillRect(lx - 8, ly - 4, 128, opts.showR ? 44 : 24);
+  ctx.fillRect(lx - 8, ly - 4, 128, showBottom ? 44 : 24);
   ctx.strokeStyle = '#e5e7eb';
   ctx.lineWidth = 1;
-  ctx.strokeRect(lx - 8, ly - 4, 128, opts.showR ? 44 : 24);
+  ctx.strokeRect(lx - 8, ly - 4, 128, showBottom ? 44 : 24);
 
   let lyOff = ly + 2;
   ctx.beginPath();
@@ -579,7 +705,17 @@ function drawPlot(canvas, data, lenses, opts) {
   ctx.textBaseline = 'middle';
   ctx.fillText('w(z)', lx + 26, lyOff + 6);
 
-  if (opts.showR) {
+  if (opts.showPhase) {
+    lyOff += 20;
+    ctx.beginPath();
+    ctx.moveTo(lx, lyOff + 6);
+    ctx.lineTo(lx + 20, lyOff + 6);
+    ctx.strokeStyle = '#0891b2';
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+    ctx.fillStyle = '#1f2937';
+    ctx.fillText('φ(z)', lx + 26, lyOff + 6);
+  } else if (opts.showR) {
     lyOff += 20;
     ctx.beginPath();
     ctx.moveTo(lx, lyOff + 6);
@@ -633,7 +769,7 @@ function setupMouseTracking(canvas, data, lenses, opts) {
   function posFrom(clientX) {
     const rect = canvas.getBoundingClientRect();
     const mx = clientX - rect.left;
-    const M = { left: 62, right: opts.showR ? 62 : 18 };
+    const M = { left: 62, right: (opts.showR || opts.showPhase) ? 62 : 18 };
     const pW = rect.width - M.left - M.right;
     const zEffMin = opts.zoomRange ? opts.zoomRange.zMin : 0;
     const zEffMax = opts.zoomRange ? opts.zoomRange.zMax : data.zMax;
@@ -685,14 +821,19 @@ function setupMouseTracking(canvas, data, lenses, opts) {
     vCursor.style.left = (p.mx + p.rect.left - wrap.getBoundingClientRect().left) + 'px';
     vCursor.style.height = p.rect.height + 'px';
 
-    const showInvR = opts.showInvR;
-    const rStr = showInvR
-      ? (isFinite(Ri) ? (Math.abs(Ri) > 1e-15 ? (1/Ri).toFixed(6) : '0') : '0')
-      : (isFinite(Ri) ? (Math.abs(Ri) > 1e6 ? '∞' : Ri.toFixed(1)) : '∞');
-    const rLabel = showInvR ? '1/R' : 'R';
-    const rUnit = showInvR ? 'mm⁻¹' : 'mm';
     info.style.display = 'block';
-    info.innerHTML = `z = ${zi.toFixed(1)} mm<br>w = ${wi.toFixed(4)} mm<br>${rLabel} = ${rStr} ${rUnit}`;
+    if (opts.showPhase) {
+      const phi = data.phaseValues[idx];
+      info.innerHTML = `z = ${zi.toFixed(1)} mm<br>w = ${wi.toFixed(4)} mm<br>φ = ${isFinite(phi) ? phi.toFixed(6) : '0'} rad`;
+    } else {
+      const showInvR = opts.showInvR;
+      const rStr = showInvR
+        ? (isFinite(Ri) ? (Math.abs(Ri) > 1e-15 ? (1/Ri).toFixed(6) : '0') : '0')
+        : (isFinite(Ri) ? (Math.abs(Ri) > 1e6 ? '∞' : Ri.toFixed(1)) : '∞');
+      const rLabel = showInvR ? '1/R' : 'R';
+      const rUnit = showInvR ? 'mm⁻¹' : 'mm';
+      info.innerHTML = `z = ${zi.toFixed(1)} mm<br>w = ${wi.toFixed(4)} mm<br>${rLabel} = ${rStr} ${rUnit}`;
+    }
 
     let ix = p.mx + 14;
     let iy = e.clientY - p.rect.top - 20;
@@ -737,11 +878,11 @@ function setupMouseTracking(canvas, data, lenses, opts) {
 function updateResults(data, lenses, totalLen) {
   const tbody = document.getElementById('resultsBody');
   const active = lenses.filter(l => l.active).sort((a, b) => a.pos - b.pos);
-  const { zValues, wValues, RValues } = data;
+  const { zValues, wValues, RValues, phaseValues } = data;
   const rows = [];
 
   // Input plane (z = 0 is always the very first sample).
-  rows.push({ z: 0, desc: 'Input plane', w: wValues[0], R: RValues[0] });
+  rows.push({ z: 0, desc: 'Input plane', w: wValues[0], R: RValues[0], phi: phaseValues[0] });
 
   // For each lens, locate the first and last occurrence of its
   // position in zValues.  The first is the value *before* the lens,
@@ -755,20 +896,20 @@ function updateResults(data, lenses, totalLen) {
       }
     }
     if (iFirst !== -1) {
-      rows.push({ z: lens.pos, desc: `Before lens (f = ${lens.f} mm)`, w: wValues[iFirst], R: RValues[iFirst] });
+      rows.push({ z: lens.pos, desc: `Before lens (f = ${lens.f} mm)`, w: wValues[iFirst], R: RValues[iFirst], phi: phaseValues[iFirst] });
       if (iLast > iFirst) {
-        rows.push({ z: lens.pos, desc: `After lens (f = ${lens.f} mm)`, w: wValues[iLast], R: RValues[iLast] });
+        rows.push({ z: lens.pos, desc: `After lens (f = ${lens.f} mm)`, w: wValues[iLast], R: RValues[iLast], phi: phaseValues[iLast] });
       }
     }
   }
 
   // Output plane (last sampled point).
   const last = zValues.length - 1;
-  rows.push({ z: zValues[last], desc: 'Output plane', w: wValues[last], R: RValues[last] });
+  rows.push({ z: zValues[last], desc: 'Output plane', w: wValues[last], R: RValues[last], phi: phaseValues[last] });
 
   tbody.innerHTML = rows.map(r => {
     const rStr = isFinite(r.R) ? (Math.abs(r.R) > 1e8 ? '∞' : r.R.toFixed(1)) : '∞';
-    return `<tr><td>${r.z.toFixed(1)}</td><td>${r.desc}</td><td>${r.w.toFixed(4)}</td><td>${rStr}</td></tr>`;
+    return `<tr><td>${r.z.toFixed(1)}</td><td>${r.desc}</td><td>${r.w.toFixed(4)}</td><td>${rStr}</td><td>${r.phi.toFixed(6)}</td></tr>`;
   }).join('');
 }
 
@@ -852,6 +993,7 @@ function update() {
   const showR = document.getElementById('showR').checked;
   const showGrid = document.getElementById('showGrid').checked;
   const showInvR = document.getElementById('showInvR').checked;
+  const showPhase = document.getElementById('showPhase').checked;
   const showPoints = document.getElementById('showPoints').checked;
 
   const lenses = readLenses();
@@ -860,8 +1002,8 @@ function update() {
 
   const data = propagate(wavelength, w0, R0, lenses, totalLen, nSamples);
   const canvas = document.getElementById('plotCanvas');
-  drawPlot(canvas, data, lenses, { showR, showGrid, showInvR, showPoints, zoomRange });
-  setupMouseTracking(canvas, data, lenses, { showR, showInvR, zoomRange });
+  drawPlot(canvas, data, lenses, { showR, showGrid, showInvR, showPhase, showPoints, zoomRange });
+  setupMouseTracking(canvas, data, lenses, { showR, showInvR, showPhase, zoomRange });
   updateResults(data, lenses, totalLen);
 
   // Show the Reset Zoom button only when a zoom is active.
@@ -877,6 +1019,7 @@ document.getElementById('recalcBtn').addEventListener('click', update);
 document.getElementById('showR').addEventListener('change', update);
 document.getElementById('showGrid').addEventListener('change', update);
 document.getElementById('showInvR').addEventListener('change', update);
+document.getElementById('showPhase').addEventListener('change', update);
 document.getElementById('showPoints').addEventListener('change', update);
 
 // Reset-zoom: return to the full propagation range.

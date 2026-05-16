@@ -25,7 +25,7 @@ After an ABCD matrix, *q* transforms as:
 q' = (A·q + B) / (C·q + D)
 ```
 
-The tool walks along the optical axis, composes the cumulative ABCD matrix from each sample point back to the input plane, and extracts *w*(*z*) and *R*(*z*) from the transformed *q*-parameter.
+The tool walks along the optical axis, composes the cumulative ABCD matrix from each sample point back to the input plane, and extracts *w*(*z*) and *R*(*z*) from the transformed *q*-parameter. The accumulated Guoy phase is computed as *φ*(*z*) = −Arg(*A*(*z*) + *B*(*z*)/*q*₀), where (*A*, *B*) are elements of the cumulative ABCD matrix and *q*₀ is the input *q*-parameter.
 
 ## Usage
 
@@ -44,11 +44,15 @@ The tool walks along the optical axis, composes the cumulative ABCD matrix from 
 
 ### Plot
 - **Top panel**: beam width *w*(*z*) as a filled envelope
-- **Bottom panel**: radius of curvature *R*(*z*) (toggleable to 1/*R*(*z*))
-- **Show R(z)** — show/hide the bottom panel
+- **Bottom panel**: radius of curvature *R*(*z*), inverse radius 1/*R*(*z*), or accumulated Guoy phase *φ*(*z*)
+- **Show R(z)** — show/hide the radius panel
 - **Show 1/R(z)** — switch the bottom panel to inverse radius
+- **Show φ(z)** — plot the accumulated Guoy phase shift (takes priority over R/1/R when checked)
 - **Grid** — toggle background grid lines
+- **Points** — toggle data-point markers on both panels (useful for seeing the before/after lens discontinuity)
 - Hover over the plot to see exact values at any z-position
+- **Drag horizontally** on the plot to zoom into a z-range (y-axes re-scale automatically)
+- Click **Reset Zoom** to return to the full view
 
 ### Results table
 The table below the plot shows *w* and *R* at the input plane, every active lens, and the output plane.
