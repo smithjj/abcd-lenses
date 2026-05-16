@@ -44,6 +44,15 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; margin-bottom: 6
 /* ── Add / remove lens buttons ── */
 .btn-add-lens { padding: 2px 10px; background: #3b82f6; color: #fff; border: none; border-radius: 4px; font-size: 11px; cursor: pointer; margin-left: 10px; vertical-align: middle; font-weight: 500; }
 .btn-add-lens:hover { background: #2563eb; }
+
+/* ── Presets ── */
+.presets { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; font-size: 13px; color: #374151; }
+.presets select { padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 5px; font-size: 13px; background: #fff; min-width: 180px; }
+.presets select:focus { outline: none; border-color: #3b82f6; }
+.btn-preset { padding: 5px 14px; background: #3b82f6; color: #fff; border: none; border-radius: 5px; font-size: 12px; font-weight: 500; cursor: pointer; }
+.btn-preset:hover { background: #2563eb; }
+.btn-preset-danger { background: #ef4444; }
+.btn-preset-danger:hover { background: #dc2626; }
 .lens-remove { background: none; border: none; color: #ef4444; font-size: 18px; cursor: pointer; padding: 0 6px; line-height: 1; font-weight: 700; transition: color .15s; }
 .lens-remove:hover { color: #dc2626; }
 
@@ -96,6 +105,15 @@ canvas { width: 100%; height: 520px; display: block; cursor: crosshair; }
     <label class="toggle-label"><input type="checkbox" id="showFwhm"> FWHM</label>
     <label class="toggle-label"><input type="checkbox" id="showWaistTrack"> Compare: waist-tracking (dashed)</label>
     <button class="btn" id="resetZoomBtn" style="display:none">Reset Zoom</button>
+  </div>
+
+  <div class="presets">
+    <label>Presets:</label>
+    <select id="presetSelect" title="Load a saved preset">
+      <option value="">— Select —</option>
+    </select>
+    <button class="btn-preset" id="savePresetBtn">Save</button>
+    <button class="btn-preset btn-preset-danger" id="deletePresetBtn">✕</button>
   </div>
 
   <div class="plot-wrap" id="plotWrap">
@@ -1109,19 +1127,21 @@ function setupMouseTracking(canvas, dataX, lenses, opts, dataY, dataWT) {
 
     const zi = dataX.zValues[idx];
     const wScaleT = opts.showFwhm ? Math.sqrt(2 * Math.log(2)) : 1;
-    const wi = dataX.wValues[idx] * wScaleT;
-    const Ri = dataX.RValues[idx];
+    const wLabel = opts.showFwhm ? 'FWHM' : 'w';
+    const wix = dataX.wValues[idx] * wScaleT;
+    const Riy = dataY ? dataY.RValues[idx] : dataX.RValues[idx];
+    const wiy = dataY ? dataY.wValues[idx] * wScaleT : wix;
 
     vCursor.style.display = 'block';
     vCursor.style.left = (p.mx + p.rect.left - wrap.getBoundingClientRect().left) + 'px';
     vCursor.style.height = p.rect.height + 'px';
 
     info.style.display = 'block';
-    const rStr = isFinite(Ri) ? (Math.abs(Ri) > 1e8 ? '∞' : Ri.toExponential(4)) : '∞';
-    const invRStr = isFinite(Ri) ? (Math.abs(Ri) > 1e-15 ? (1/Ri).toExponential(4) : '0') : '0';
-    const wy = dataY ? dataY.wValues[idx] * wScaleT : null;
-    const wLabel = opts.showFwhm ? 'FWHM' : 'w';
-    const wLine = (wy !== null && isFinite(wy)) ? `${wLabel}ₓ = ${wi.toFixed(4)} mm, ${wLabel}ᵧ = ${wy.toFixed(4)} mm` : `${wLabel} = ${wi.toFixed(4)} mm`;
+    const rStr = (v) => isFinite(v) ? (Math.abs(v) > 1e8 ? '∞' : v.toExponential(4)) : '∞';
+    const invRStr = (v) => isFinite(v) ? (Math.abs(v) > 1e-15 ? (1/v).toExponential(4) : '0') : '0';
+    const RRx = dataX.RValues[idx];
+    const wLine = `${wLabel}ₓ = ${wix.toFixed(4)} mm, ${wLabel}ᵧ = ${wiy.toFixed(4)} mm`;
+    const rLine = `Rₓ = ${rStr(RRx)} mm, 1/Rₓ = ${invRStr(RRx)} mm⁻¹<br>Rᵧ = ${rStr(Riy)} mm, 1/Rᵧ = ${invRStr(Riy)} mm⁻¹`;
     let wtLine = '';
     if (dataWT) {
       const wWT = dataWT.wValues[idx] * wScaleT;
@@ -1133,9 +1153,9 @@ function setupMouseTracking(canvas, dataX, lenses, opts, dataY, dataWT) {
     }
     if (opts.showPhase) {
       const phi = dataX.phaseValues[idx];
-      info.innerHTML = `z = ${zi.toFixed(3)} mm<br>${wLine}<br>R = ${rStr} mm, 1/R = ${invRStr} mm⁻¹<br>${wtLine}φ = ${isFinite(phi) ? phi.toFixed(6) : '0'} rad`;
+      info.innerHTML = `z = ${zi.toFixed(3)} mm<br>${wLine}<br>${rLine}<br>${wtLine}φ = ${isFinite(phi) ? phi.toFixed(6) : '0'} rad`;
     } else {
-      info.innerHTML = `z = ${zi.toFixed(3)} mm<br>${wLine}<br>R = ${rStr} mm, 1/R = ${invRStr} mm⁻¹<br>${wtLine}`;
+      info.innerHTML = `z = ${zi.toFixed(3)} mm<br>${wLine}<br>${rLine}<br>${wtLine}`;
     }
 
     let ix = p.mx + 14;
@@ -1343,6 +1363,137 @@ function renderLenses() {
 }
 
 // ══════════════════════════════════════════════════════════════
+// Preset save / load
+//
+// Presets are stored in localStorage under a single key as a
+// JSON array of { name, beam, lenses } objects.
+// ══════════════════════════════════════════════════════════════
+const PRESET_KEY = 'abcdPresets';
+
+function loadPresets() {
+  try { return JSON.parse(localStorage.getItem(PRESET_KEY)) || []; } catch { return []; }
+}
+
+function savePresets(presets) {
+  try { localStorage.setItem(PRESET_KEY, JSON.stringify(presets)); } catch {}
+}
+
+function getCurrentConfig() {
+  syncLensDataFromDOM();
+  const rawW0 = parseFloat(document.getElementById('w0').value);
+  const rawW0y = parseFloat(document.getElementById('w0y').value);
+  const isFwhm = document.getElementById('showFwhm').checked;
+  return {
+    wavelength: document.getElementById('wavelength').value,
+    // Always store as 1/e² radius.
+    w0: isFwhm ? (rawW0 / FWHM_FACTOR).toFixed(6) : '' + rawW0,
+    w0y: isFwhm ? (rawW0y / FWHM_FACTOR).toFixed(6) : '' + rawW0y,
+    M2: document.getElementById('M2').value,
+    R0: document.getElementById('R0').value,
+    R0y: document.getElementById('R0y').value,
+    totalLength: document.getElementById('totalLength').value,
+    samples: document.getElementById('samples').value,
+    lenses: JSON.parse(JSON.stringify(lensData)),
+    isFwhm: isFwhm ? 1 : 0
+  };
+}
+
+function applyConfig(cfg) {
+  document.getElementById('wavelength').value = cfg.wavelength;
+  document.getElementById('M2').value = cfg.M2;
+  document.getElementById('R0').value = cfg.R0;
+  document.getElementById('R0y').value = cfg.R0y;
+  document.getElementById('totalLength').value = cfg.totalLength;
+  document.getElementById('samples').value = cfg.samples;
+  document.getElementById('showFwhm').checked = !!cfg.isFwhm;
+  const factor = cfg.isFwhm ? FWHM_FACTOR : 1;
+  document.getElementById('w0').value = (parseFloat(cfg.w0) * factor).toFixed(4);
+  document.getElementById('w0y').value = (parseFloat(cfg.w0y) * factor).toFixed(4);
+  lensData = JSON.parse(JSON.stringify(cfg.lenses));
+  renderLenses();
+}
+
+function populatePresetMenu() {
+  const sel = document.getElementById('presetSelect');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— Select —</option>';
+  const presets = loadPresets();
+  for (const p of presets) {
+    const opt = document.createElement('option');
+    opt.value = p.name;
+    opt.textContent = p.name;
+    sel.appendChild(opt);
+  }
+  if ([...sel.options].some(o => o.value === cur)) sel.value = cur;
+}
+
+function savePreset() {
+  const presets = loadPresets();
+  const existingNames = presets.map(p => p.name);
+  let name = prompt('Preset name:');
+  if (!name || !name.trim()) return;
+  name = name.trim();
+  // Allow overwriting an existing preset by using the same name.
+  const idx = existingNames.indexOf(name);
+  const cfg = getCurrentConfig();
+  if (idx !== -1) {
+    presets[idx] = { name, ...cfg };
+  } else {
+    presets.push({ name, ...cfg });
+  }
+  savePresets(presets);
+  populatePresetMenu();
+  document.getElementById('presetSelect').value = name;
+}
+
+function loadPreset() {
+  const sel = document.getElementById('presetSelect');
+  const name = sel.value;
+  if (!name) return;
+  const presets = loadPresets();
+  const p = presets.find(x => x.name === name);
+  if (!p) return;
+  applyConfig(p);
+  update();
+}
+
+function deletePreset() {
+  const sel = document.getElementById('presetSelect');
+  const name = sel.value;
+  if (!name) return;
+  if (!confirm('Delete preset "' + name + '"?')) return;
+  let presets = loadPresets();
+  presets = presets.filter(p => p.name !== name);
+  savePresets(presets);
+  populatePresetMenu();
+}
+
+// Seed defaults if no presets exist.
+(function seedPresets() {
+  if (loadPresets().length > 0) return;
+  savePresets([
+    {
+      name: 'Default (2 lenses)',
+      wavelength: '633', w0: '0.5', w0y: '0.5', M2: '1', R0: '0', R0y: '0',
+      totalLength: '300', samples: '4096',
+      lenses: [{ pos: 100, fx: 25, fy: 25, active: true }, { pos: 200, fx: 75, fy: 75, active: true }], isFwhm: 0
+    },
+    {
+      name: 'Telescope (4f)',
+      wavelength: '633', w0: '0.5', w0y: '0.5', M2: '1', R0: '0', R0y: '0',
+      totalLength: '400', samples: '4096',
+      lenses: [{ pos: 100, fx: 100, fy: 100, active: true }, { pos: 300, fx: 100, fy: 100, active: true }], isFwhm: 0
+    },
+    {
+      name: 'Astigmatic beam + lenses',
+      wavelength: '532', w0: '0.8', w0y: '0.4', M2: '1', R0: '0', R0y: '0',
+      totalLength: '500', samples: '4096',
+      lenses: [{ pos: 150, fx: 80, fy: 60, active: true }, { pos: 300, fx: 50, fy: 100, active: true }], isFwhm: 0
+    }
+  ]);
+})();
+
+// ══════════════════════════════════════════════════════════════
 // Main update pipeline
 //
 // Called on every user interaction (Recalculate button, checkbox
@@ -1413,6 +1564,11 @@ document.getElementById('showFwhm').addEventListener('change', () => {
   w0yInput.value = isFwhm ? (parseFloat(w0yInput.value) * FWHM_FACTOR).toFixed(4) : (parseFloat(w0yInput.value) / FWHM_FACTOR).toFixed(4);
 });
 
+// Preset controls.
+document.getElementById('presetSelect').addEventListener('change', loadPreset);
+document.getElementById('savePresetBtn').addEventListener('click', savePreset);
+document.getElementById('deletePresetBtn').addEventListener('click', deletePreset);
+
 // Reset-zoom: return to the full propagation range.
 document.getElementById('resetZoomBtn').addEventListener('click', () => {
   zoomRange = null;
@@ -1449,6 +1605,7 @@ document.getElementById('lensContainer').addEventListener('keydown', (e) => {
 // Bootstrap: render the initial single-lens controls, then run the
 // first propagation + plot once the DOM is fully loaded.
 renderLenses();
+populatePresetMenu();
 window.addEventListener('load', update);
 window.addEventListener('resize', update);
 

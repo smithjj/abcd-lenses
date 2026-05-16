@@ -57,15 +57,26 @@ As a cross-check, the tool computes an independent propagation of the Gaussian b
 - A red × button removes a lens (disabled when only one remains)
 - All inputs auto-recalculate on change or Enter key
 
+### Presets
+- Click **Save** to save the current beam parameters and lenses as a named preset (stored in your browser's localStorage)
+- Select a preset from the dropdown to restore it instantly
+- The **FWHM** display mode is saved with each preset so it loads correctly
+- Three built-in presets are seeded on first visit: *Default (2 lenses)*, *Telescope (4f)*, and *Astigmatic beam + lenses*
+
+### FWHM toggle
+- Check **FWHM** to switch all displayed beam widths from 1/e² radius to full-width at half-maximum (*FWHM* = *w* · √(2·ln 2) ≈ 1.177 · *w*)
+- The toggle applies to the top-panel plots, y-axis labels, legend, tooltip, results table, and waist markers
+- Toggling converts the w₀ / w₀y input values between the two conventions automatically
+
 ### Plot
-- **Top panel**: beam widths *wₓ*(*z*) and *wᵧ*(*z*) (when asymmetric) as line curves with a filled envelope. Dashed overlay curves for waist-tracking (WT) comparison
+- **Top panel**: beam widths *wₓ*(*z*) and *wᵧ*(*z*) (or **FWHM** when toggled) as line curves with a filled envelope. Dashed overlay curves for waist-tracking (WT) comparison
 - **Bottom panel**: radius of curvature *R*(*z*), inverse radius 1/*R*(*z*), or accumulated Guoy phase *φ*(*z*). Dashed WT overlay shown when enabled
 - **Show R(z)** — show/hide the radius panel
 - **Show 1/R(z)** — switch the bottom panel to inverse radius (default on)
 - **Show φ(z)** — plot the accumulated Guoy phase shift (takes priority over R/1/R when checked)
 - **Grid** — toggle background grid lines (default on)
 - **Points** — toggle data-point markers on both panels (useful for seeing the before/after lens discontinuity; default off)
-- Hover over the plot to see exact values at any z-position (wₓ, wᵧ, Rₓ, Rᵧ or 1/Rₓ, 1/Rᵧ, φ when enabled, plus WT comparison values in gray)
+- Hover over the plot to see exact values at any z-position (wₓ **and** wᵧ always, Rₓ/Rᵧ or 1/Rₓ/1/Rᵧ always, plus φ and WT comparison values in gray)
 - **Drag horizontally** on the plot to zoom into a z-range (y-axes re-scale automatically)
 - **Shift-click** to zoom out by 20 %
 - **Double-click** to reset zoom to the full view
