@@ -45,6 +45,7 @@ h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px; margin-bottom: 6
 /* ── Plot canvas & overlays ── */
 .plot-wrap { position: relative; width: 100%; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; background: #fafbfc; }
 canvas { width: 100%; height: 520px; display: block; cursor: crosshair; }
+.zoom-rect { position: absolute; top: 0; background: rgba(59,130,246,0.10); border: 1px solid rgba(59,130,246,0.45); pointer-events: none; display: none; z-index: 1; }
 .v-cursor { position: absolute; top: 0; width: 1px; background: rgba(0,0,0,0.25); pointer-events: none; display: none; }
 .cursor-info { position: absolute; background: rgba(30,30,40,0.88); color: #fff; padding: 8px 14px; border-radius: 6px; font-size: 12px; line-height: 1.5; pointer-events: none; display: none; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
@@ -83,10 +84,12 @@ canvas { width: 100%; height: 520px; display: block; cursor: crosshair; }
     <label class="toggle-label"><input type="checkbox" id="showR" checked> Show R(z)</label>
     <label class="toggle-label"><input type="checkbox" id="showGrid" checked> Grid</label>
     <label class="toggle-label"><input type="checkbox" id="showInvR"> Show 1/R(z)</label>
+    <button class="btn" id="resetZoomBtn" style="display:none">Reset Zoom</button>
   </div>
 
   <div class="plot-wrap" id="plotWrap">
     <canvas id="plotCanvas"></canvas>
+    <div class="zoom-rect" id="zoomRect"></div>
     <div class="v-cursor" id="vCursor"></div>
     <div class="cursor-info" id="cursorInfo"></div>
   </div>
@@ -240,12 +243,21 @@ function drawPlot(canvas, data, lenses, opts) {
   const pH1 = (H - M.top - M.bottom - M.gap) * 0.65;
   const pH2 = (H - M.top - M.bottom - M.gap) * 0.35;
 
-  // Auto-scale y-axes: find the max finite value, then add 15–20 % headroom.
-  // Non-finite values (Infinity from waists / poles) are excluded from the range
-  // so they don't collapse the visible scale.
+  // Apply zoom: only the visible z-range is plotted.  Y-axes auto-scale
+  // to the visible data so zooming in re-ranges the vertical scale.
+  const zMin = opts.zoomRange ? opts.zoomRange.zMin : 0;
+  const zMaxDisp = opts.zoomRange ? opts.zoomRange.zMax : zMax;
+  const zSpan = Math.max(zMaxDisp - zMin, 1e-6);
+
+  function idxFirst(arr, lo) { for (let i = 0; i < arr.length; i++) if (arr[i] >= lo) return i; return arr.length - 1; }
+  function idxLast(arr, hi) { for (let i = arr.length - 1; i >= 0; i--) if (arr[i] <= hi) return i; return 0; }
+  const i0 = idxFirst(zValues, zMin);
+  const i1 = idxLast(zValues, zMaxDisp);
+
+  // Auto-scale y-axes from visible data only.
   const finiteW = [];
   const finiteR = [];
-  for (let i = 0; i < zValues.length; i++) {
+  for (let i = i0; i <= i1; i++) {
     if (isFinite(wValues[i]) && wValues[i] > 0) finiteW.push(wValues[i]);
     if (isFinite(RValues[i])) finiteR.push(Math.abs(RValues[i]));
   }
@@ -254,8 +266,8 @@ function drawPlot(canvas, data, lenses, opts) {
   const maxRVal = finiteR.length ? Math.max(...finiteR) : 1;
   const rLimit = Math.max(maxRVal * 1.2, 1);
 
-  // Utility: map data to canvas coords
-  const toX = (z) => M.left + (z / zMax) * pW;
+  // Map data coordinates to canvas pixels.
+  const toX = (z) => M.left + ((z - zMin) / zSpan) * pW;
   const toY1 = (w) => M.top + pH1 * (1 - w / maxW);
   const toY2 = (R) => M.top + pH1 + M.gap + pH2 * (0.5 - R / (2 * rLimit));
 
@@ -268,17 +280,16 @@ function drawPlot(canvas, data, lenses, opts) {
   ctx.rect(M.left, M.top, pW, pH1);
   ctx.clip();
 
-  if (opts.grid) drawGrid(ctx, M.left, M.top, pW, pH1, zMax, maxW, 5, 5);
+  if (opts.grid) drawGrid(ctx, M.left, M.top, pW, pH1, zSpan, maxW, 5, 5);
 
-  // Filled envelope: trace the upper boundary (+w), then return along the
-  // zero axis (w=0) to create a closed polygon that fills the beam profile.
+  // Filled envelope over the visible z-range only.
   ctx.beginPath();
-  ctx.moveTo(toX(zValues[0]), toY1(0));
-  for (let i = 0; i < zValues.length; i++) {
+  ctx.moveTo(toX(zValues[i0]), toY1(0));
+  for (let i = i0; i <= i1; i++) {
     const y = toY1(Math.max(wValues[i], 0));
     ctx.lineTo(toX(zValues[i]), y);
   }
-  for (let i = zValues.length - 1; i >= 0; i--) {
+  for (let i = i1; i >= i0; i--) {
     const y = toY1(0);
     ctx.lineTo(toX(zValues[i]), y);
   }
@@ -288,10 +299,11 @@ function drawPlot(canvas, data, lenses, opts) {
 
   // Upper boundary of the beam (+w(z) curve)
   ctx.beginPath();
-  for (let i = 0; i < zValues.length; i++) {
+  let wFirst = true;
+  for (let i = i0; i <= i1; i++) {
     const x = toX(zValues[i]);
     const y = toY1(Math.max(wValues[i], 0));
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    if (wFirst) { ctx.moveTo(x, y); wFirst = false; } else { ctx.lineTo(x, y); }
   }
   ctx.strokeStyle = '#2563eb';
   ctx.lineWidth = 2;
@@ -299,8 +311,9 @@ function drawPlot(canvas, data, lenses, opts) {
 
   // Lens markers on the w(z) panel: a dashed vertical line at the lens
   // position, topped with a double-headed arrow as the conventional
-  // thin-lens symbol.
+  // thin-lens symbol.  Only drawn when the lens is inside the visible range.
   for (const lens of active) {
+    if (lens.pos < zMin || lens.pos > zMaxDisp) continue;
     const x = toX(lens.pos);
     ctx.beginPath();
     ctx.moveTo(x, M.top);
@@ -392,13 +405,12 @@ function drawPlot(canvas, data, lenses, opts) {
     ctx.rect(M.left, M.top + pH1 + M.gap, pW, pH2);
     ctx.clip();
 
-    if (opts.grid) drawGrid(ctx, M.left, M.top + pH1 + M.gap, pW, pH2, zMax, 2 * yLimit, 5, 5, 0);
+    if (opts.grid) drawGrid(ctx, M.left, M.top + pH1 + M.gap, pW, pH2, zSpan, 2 * yLimit, 5, 5, 0);
 
-    // Draw the curve, skipping non-finite samples (the pen jumps to
-    // avoid drawing across poles) and clamping to the y-axis range.
+    // Draw the curve over the visible z-range only.
     ctx.beginPath();
     let started = false;
-    for (let i = 0; i < plotY.length; i++) {
+    for (let i = i0; i <= i1; i++) {
       const v = plotY[i];
       if (!isFinite(v)) { started = false; continue; }
       const clamped = Math.max(-yLimit, Math.min(yLimit, v));
@@ -423,6 +435,7 @@ function drawPlot(canvas, data, lenses, opts) {
     ctx.setLineDash([]);
 
     for (const lens of active) {
+      if (lens.pos < zMin || lens.pos > zMaxDisp) continue;
       const x = toX(lens.pos);
       ctx.beginPath();
       ctx.moveTo(x, M.top + pH1 + M.gap);
@@ -469,9 +482,9 @@ function drawPlot(canvas, data, lenses, opts) {
   ctx.font = '10px sans-serif';
   const nXTicks = 8;
   for (let i = 0; i <= nXTicks; i++) {
-    const val = (i / nXTicks) * zMax;
+    const val = zMin + (i / nXTicks) * zSpan;
     const x = toX(val);
-    ctx.fillText(val.toFixed(0), x, H - M.bottom + 20);
+    ctx.fillText(val.toFixed(1), x, H - M.bottom + 20);
   }
 
   // Legend
@@ -529,36 +542,67 @@ function drawGrid(ctx, ox, oy, w, h, xMax, yRange, nx, ny, yCenter) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// Mouse tracking overlay
+// Mouse tracking overlay & drag-to-zoom
 //
-// When the user hovers over the plot canvas a vertical cursor line
-// follows the mouse and a tooltip box shows the exact numerical
-// values of z, w(z), and R(z) (or 1/R(z)) at the nearest sample point.
+// Hovering shows a vertical cursor and tooltip with exact values.
+// Dragging left-to-right (or right-to-left) on the plot selects a
+// z-range to zoom into.  A semi-transparent rectangle is drawn
+// during the drag for visual feedback.
 // ══════════════════════════════════════════════════════════════
 function setupMouseTracking(canvas, data, lenses, opts) {
   const wrap = document.getElementById('plotWrap');
   const vCursor = document.getElementById('vCursor');
   const info = document.getElementById('cursorInfo');
+  const zoomRect = document.getElementById('zoomRect');
 
-  function onMove(e) {
+  let dragStart = null;
+
+  // Convert a mouse clientX to canvas-local mx and data-space z,
+  // accounting for the current zoom level.
+  function posFrom(clientX) {
     const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
+    const mx = clientX - rect.left;
     const M = { left: 62, right: opts.showR ? 62 : 18 };
     const pW = rect.width - M.left - M.right;
-    const zMax = data.zMax;
-    const z = ((mx - M.left) / pW) * zMax;
+    const zEffMin = opts.zoomRange ? opts.zoomRange.zMin : 0;
+    const zEffMax = opts.zoomRange ? opts.zoomRange.zMax : data.zMax;
+    const z = mx < M.left ? zEffMin
+            : mx > M.left + pW ? zEffMax
+            : zEffMin + ((mx - M.left) / pW) * (zEffMax - zEffMin);
+    return { mx, z, M, pW, rect };
+  }
 
-    if (mx < M.left || mx > M.left + pW || !data.zValues) {
+  canvas.addEventListener('mousedown', (e) => {
+    const p = posFrom(e.clientX);
+    dragStart = { clientX: e.clientX, mx: p.mx, z: p.z };
+  });
+
+  canvas.addEventListener('mousemove', (e) => {
+    const p = posFrom(e.clientX);
+
+    if (dragStart) {
+      // Drag is active — show the zoom selection rectangle.
+      const wrapRect = wrap.getBoundingClientRect();
+      const sx = dragStart.clientX - wrapRect.left;
+      const cx = e.clientX - wrapRect.left;
+      zoomRect.style.display = 'block';
+      zoomRect.style.left = Math.min(sx, cx) + 'px';
+      zoomRect.style.width = Math.abs(cx - sx) + 'px';
+      zoomRect.style.top = '0px';
+      zoomRect.style.height = wrapRect.height + 'px';
+      return;
+    }
+
+    // Not dragging — show the cursor tooltip.
+    if (p.mx < p.M.left || p.mx > p.M.left + p.pW || !data.zValues) {
       vCursor.style.display = 'none';
       info.style.display = 'none';
       return;
     }
 
-    // Find nearest sample
-    let idx = 0;
-    let minDist = Infinity;
+    let idx = 0, minDist = Infinity;
     for (let i = 0; i < data.zValues.length; i++) {
-      const d = Math.abs(data.zValues[i] - z);
+      const d = Math.abs(data.zValues[i] - p.z);
       if (d < minDist) { minDist = d; idx = i; }
     }
 
@@ -567,8 +611,8 @@ function setupMouseTracking(canvas, data, lenses, opts) {
     const Ri = data.RValues[idx];
 
     vCursor.style.display = 'block';
-    vCursor.style.left = (mx + rect.left - wrap.getBoundingClientRect().left) + 'px';
-    vCursor.style.height = rect.height + 'px';
+    vCursor.style.left = (p.mx + p.rect.left - wrap.getBoundingClientRect().left) + 'px';
+    vCursor.style.height = p.rect.height + 'px';
 
     const showInvR = opts.showInvR;
     const rStr = showInvR
@@ -579,18 +623,32 @@ function setupMouseTracking(canvas, data, lenses, opts) {
     info.style.display = 'block';
     info.innerHTML = `z = ${zi.toFixed(1)} mm<br>w = ${wi.toFixed(4)} mm<br>${rLabel} = ${rStr} ${rUnit}`;
 
-    // Position info box
-    let ix = mx + 14;
-    let iy = e.clientY - rect.top - 20;
-    if (ix + 130 > rect.width) ix = mx - 140;
+    let ix = p.mx + 14;
+    let iy = e.clientY - p.rect.top - 20;
+    if (ix + 130 > p.rect.width) ix = p.mx - 140;
     if (iy < 4) iy = 4;
-    if (iy + 50 > rect.height) iy = rect.height - 54;
+    if (iy + 50 > p.rect.height) iy = p.rect.height - 54;
     info.style.left = ix + 'px';
     info.style.top = iy + 'px';
-  }
+  });
 
-  canvas.addEventListener('mousemove', onMove);
+  canvas.addEventListener('mouseup', (e) => {
+    if (!dragStart) return;
+    const p = posFrom(e.clientX);
+    const zEffMin = opts.zoomRange ? opts.zoomRange.zMin : 0;
+    const zEffMax = opts.zoomRange ? opts.zoomRange.zMax : data.zMax;
+    const dz = Math.abs(p.z - dragStart.z);
+    if (dz > (zEffMax - zEffMin) * 0.02) {
+      zoomRange = { zMin: Math.min(dragStart.z, p.z), zMax: Math.max(dragStart.z, p.z) };
+      update();
+    }
+    dragStart = null;
+    zoomRect.style.display = 'none';
+  });
+
   canvas.addEventListener('mouseleave', () => {
+    dragStart = null;
+    zoomRect.style.display = 'none';
     vCursor.style.display = 'none';
     info.style.display = 'none';
   });
@@ -646,6 +704,7 @@ function updateResults(data, lenses, totalLen) {
 // lensData.
 // ══════════════════════════════════════════════════════════════
 let lensData = [{ pos: 80, f: 60, active: true }];
+let zoomRange = null;
 
 function syncLensDataFromDOM() {
   const rows = document.querySelectorAll('#lensContainer .lens-row');
@@ -718,9 +777,12 @@ function update() {
 
   const data = propagate(wavelength, w0, R0, lenses, totalLen, nSamples);
   const canvas = document.getElementById('plotCanvas');
-  drawPlot(canvas, data, lenses, { showR, showGrid, showInvR });
-  setupMouseTracking(canvas, data, lenses, { showR, showInvR });
+  drawPlot(canvas, data, lenses, { showR, showGrid, showInvR, zoomRange });
+  setupMouseTracking(canvas, data, lenses, { showR, showInvR, zoomRange });
   updateResults(data, lenses, totalLen);
+
+  // Show the Reset Zoom button only when a zoom is active.
+  document.getElementById('resetZoomBtn').style.display = zoomRange ? '' : 'none';
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -732,6 +794,12 @@ document.getElementById('recalcBtn').addEventListener('click', update);
 document.getElementById('showR').addEventListener('change', update);
 document.getElementById('showGrid').addEventListener('change', update);
 document.getElementById('showInvR').addEventListener('change', update);
+
+// Reset-zoom: return to the full propagation range.
+document.getElementById('resetZoomBtn').addEventListener('click', () => {
+  zoomRange = null;
+  update();
+});
 
 // Add-lens button: snapshot the current lens values, push a new lens
 // (default position = last lens + 80 mm, f = 60 mm, active), re-render
